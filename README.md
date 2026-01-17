@@ -8,14 +8,14 @@ This project implements a **TRUE Relational Database Management System** from sc
 |-------------|----------------|
 | **Table declarations with data types** | CREATE TABLE with VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN, DATE, TIMESTAMP, TEXT |
 | **CRUD operations** | INSERT, SELECT, UPDATE, DELETE with full WHERE clause support |
-| **Basic indexing** | **B-Tree indexes** with equality AND range query support (O(log n)) |
+| **Basic indexing** | **B-Tree indexes** with equality AND range query support (O(log n)), **persisted to disk** |
 | **Primary keys** | Enforced uniqueness with O(log n) index lookup |
 | **Unique keys** | Enforced uniqueness with O(log n) index lookup |
-| **Joining** | INNER, LEFT, RIGHT JOIN with hash join algorithm |
-| **SQL interface** | Full SQL parser for all operations |
+| **Joining** | INNER, LEFT, RIGHT JOIN with hash join or index nested loop |
+| **SQL interface** | Full SQL parser including **ORDER BY**, **EXPLAIN**, **SHOW INDEXES** |
 | **Interactive REPL** | Command-line interface like mysql/psql |
 | **Demo web app** | React frontend with CRUD operations |
-| **Query EXPLAIN** | Shows whether index was used and execution time |
+| **Query EXPLAIN** | SQL command showing whether index was used and execution time |
 
 ## Architecture: True File-Based Storage
 
@@ -47,10 +47,14 @@ data/
 │   ├── products.schema.json          # Column definitions, keys, indexes
 │   ├── categories.schema.json
 │   └── orders.schema.json
-└── tables/                           # Row data (Binary page format)
-    ├── products.dat                  # 4KB pages with slotted storage
-    ├── categories.dat
-    └── orders.dat
+├── tables/                           # Row data (Binary page format)
+│   ├── products.dat                  # 4KB pages with slotted storage
+│   ├── categories.dat
+│   └── orders.dat
+└── indexes/                          # Persisted B-Tree indexes
+    ├── pk_products_id.idx            # Primary key index for products
+    ├── idx_product_category.idx      # Category lookup index
+    └── uk_categories_name.idx        # Unique index on category name
 ```
 
 ### Page-Based Storage Format

@@ -58,10 +58,8 @@
     "unique" : false,
     "indexType" : "BTREE"
   } ],
-  "createdAt" : "2026-01-17T21:27:48.271888",
-  "updatedAt" : "2026-01-17T21:27:48.271905",
+  "createdAt" : "2026-01-17T21:51:37.277586",
+  "updatedAt" : "2026-01-17T21:51:37.277602",
   "rowCount" : 0,
-  "nextRowId" : 1,
-  "primaryKeyColumns" : [ "id" ],
-  "uniqueKeyColumns" : [ ]
+  "nextRowId" : 1
 }

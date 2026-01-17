@@ -26,7 +26,10 @@ public class FileBasedSqlParserService {
     public Object executeSql(String sql) {
         sql = sql.trim().replaceAll("\\s+", " ");
         
-        if (sql.toUpperCase().startsWith("CREATE TABLE")) {
+        // Handle EXPLAIN prefix
+        if (sql.toUpperCase().startsWith("EXPLAIN ")) {
+            return parseExplain(sql);
+        } else if (sql.toUpperCase().startsWith("CREATE TABLE")) {
             return parseCreateTable(sql);
         } else if (sql.toUpperCase().startsWith("DROP TABLE")) {
             return parseDropTable(sql);
@@ -44,11 +47,51 @@ public class FileBasedSqlParserService {
             return parseDelete(sql);
         } else if (sql.toUpperCase().startsWith("SHOW TABLES")) {
             return rdbmsService.listTables();
+        } else if (sql.toUpperCase().startsWith("SHOW INDEXES")) {
+            return rdbmsService.getIndexStats();
         } else if (sql.toUpperCase().startsWith("DESCRIBE") || sql.toUpperCase().startsWith("DESC")) {
             return parseDescribe(sql);
         } else {
             throw new IllegalArgumentException("Unsupported SQL statement: " + sql);
         }
+    }
+    
+    /**
+     * Parses EXPLAIN command.
+     * Executes the query and returns the execution plan.
+     */
+    private Object parseExplain(String sql) {
+        // Remove EXPLAIN prefix and execute the query
+        String innerSql = sql.substring("EXPLAIN ".length()).trim();
+        
+        // Execute the inner query
+        executeSql(innerSql);
+        
+        // Get the execution plan from the last query
+        var execution = rdbmsService.getLastQueryExecution();
+        if (execution == null) {
+            return Map.of("message", "No execution plan available");
+        }
+        
+        // Return formatted execution plan
+        Map<String, Object> plan = new LinkedHashMap<>();
+        plan.put("query", innerSql);
+        plan.put("table", execution.getTableName());
+        plan.put("queryType", execution.getQueryType());
+        plan.put("accessMethod", execution.isIndexUsed() ? "INDEX LOOKUP" : "FULL TABLE SCAN");
+        
+        if (execution.isIndexUsed()) {
+            plan.put("indexName", execution.getIndexName());
+            plan.put("indexColumn", execution.getIndexColumn());
+            plan.put("indexOperation", execution.getIndexOperation());
+        }
+        
+        plan.put("rowsScanned", execution.getRowsScanned());
+        plan.put("rowsReturned", execution.getRowsReturned());
+        plan.put("executionTimeMs", execution.getExecutionTimeMs());
+        plan.put("executionPlan", execution.getExecutionPlan());
+        
+        return plan;
     }
     
     private Object parseDropTable(String sql) {
@@ -252,6 +295,14 @@ public class FileBasedSqlParserService {
             request.setWhere(parseWhereClause(whereClause));
         }
         
+        // Parse ORDER BY clause
+        Pattern orderByPattern = Pattern.compile("ORDER\\s+BY\\s+(.+?)(?:\\s+LIMIT|\\s+OFFSET|$)", Pattern.CASE_INSENSITIVE);
+        Matcher orderByMatcher = orderByPattern.matcher(sql);
+        if (orderByMatcher.find()) {
+            String orderByClause = orderByMatcher.group(1).trim();
+            request.setOrderBy(parseOrderByClause(orderByClause));
+        }
+        
         // Parse LIMIT
         Pattern limitPattern = Pattern.compile("LIMIT\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
         Matcher limitMatcher = limitPattern.matcher(sql);
@@ -267,6 +318,32 @@ public class FileBasedSqlParserService {
         }
         
         return rdbmsService.select(request);
+    }
+    
+    /**
+     * Parses ORDER BY clause into list of OrderBy objects.
+     * Examples: "name ASC", "price DESC, name ASC"
+     */
+    private List<SelectRequest.OrderBy> parseOrderByClause(String orderByClause) {
+        List<SelectRequest.OrderBy> orderByList = new ArrayList<>();
+        
+        String[] parts = orderByClause.split(",");
+        for (String part : parts) {
+            part = part.trim();
+            String[] tokens = part.split("\\s+");
+            
+            String column = tokens[0].trim();
+            boolean descending = false;
+            
+            if (tokens.length > 1) {
+                String direction = tokens[1].trim().toUpperCase();
+                descending = direction.equals("DESC");
+            }
+            
+            orderByList.add(new SelectRequest.OrderBy(column, descending));
+        }
+        
+        return orderByList;
     }
     
     private Object parseUpdate(String sql) {

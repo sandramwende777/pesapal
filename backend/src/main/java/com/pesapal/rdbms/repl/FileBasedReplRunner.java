@@ -62,6 +62,9 @@ public class FileBasedReplRunner implements CommandLineRunner {
             -- Show all tables
             SHOW TABLES;
             
+            -- Show index statistics
+            SHOW INDEXES;
+            
             -- Describe table structure
             DESCRIBE products;
             
@@ -80,13 +83,21 @@ public class FileBasedReplRunner implements CommandLineRunner {
             INSERT INTO employees (id, name, email, salary, active)
             VALUES (1, 'John Doe', 'john@example.com', 75000.00, true);
             
-            -- Select all data
-            SELECT * FROM employees;
-            
             -- Select with WHERE clause (uses indexes when available!)
             SELECT name, salary FROM employees WHERE active = true;
-            SELECT * FROM products WHERE price > 100;
             SELECT * FROM products WHERE category_id = 1;
+            
+            -- Select with ORDER BY (ascending or descending)
+            SELECT * FROM products ORDER BY price DESC;
+            SELECT * FROM products WHERE category_id = 1 ORDER BY name ASC;
+            
+            -- Select with LIMIT and OFFSET
+            SELECT * FROM products ORDER BY price DESC LIMIT 5;
+            SELECT * FROM products ORDER BY price LIMIT 10 OFFSET 5;
+            
+            -- EXPLAIN - show query execution plan (is index used?)
+            EXPLAIN SELECT * FROM products WHERE category_id = 1;
+            EXPLAIN SELECT * FROM products WHERE price > 100;
             
             -- Update data
             UPDATE employees SET salary = 80000.00 WHERE id = 1;
@@ -97,7 +108,7 @@ public class FileBasedReplRunner implements CommandLineRunner {
             -- Drop table
             DROP TABLE employees;
             
-            -- Join tables (uses hash join algorithm)
+            -- Join tables (uses hash join or index nested loop)
             SELECT * FROM products INNER JOIN categories
             ON products.category_id = categories.id;
             

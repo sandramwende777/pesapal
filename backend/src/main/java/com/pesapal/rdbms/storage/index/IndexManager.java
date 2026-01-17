@@ -2,8 +2,13 @@ package com.pesapal.rdbms.storage.index;
 
 import com.pesapal.rdbms.storage.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import java.io.*;
+import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -15,10 +20,16 @@ import java.util.concurrent.ConcurrentHashMap;
  * - Keep indexes in sync with data changes (insert/update/delete)
  * - Provide index lookup for query optimization
  * - Track index usage statistics
+ * - PERSIST indexes to disk for fast startup
  */
 @Component
 @Slf4j
 public class IndexManager {
+    
+    @Value("${rdbms.data.directory:data}")
+    private String dataDirectory;
+    
+    private Path indexesDir;
     
     // tableName -> columnName -> BTreeIndex
     private final Map<String, Map<String, BTreeIndex>> indexes = new ConcurrentHashMap<>();
@@ -32,6 +43,20 @@ public class IndexManager {
     // Query statistics
     private long indexLookupsUsed = 0;
     private long fullTableScans = 0;
+    
+    @PostConstruct
+    public void initialize() throws IOException {
+        indexesDir = Paths.get(dataDirectory, "indexes");
+        Files.createDirectories(indexesDir);
+        loadAllIndexes();
+        log.info("IndexManager initialized, indexes directory: {}", indexesDir);
+    }
+    
+    @PreDestroy
+    public void shutdown() {
+        saveAllIndexes();
+        log.info("IndexManager shutdown, all indexes saved to disk");
+    }
     
     /**
      * Creates a primary key index on a column.
@@ -88,6 +113,10 @@ public class IndexManager {
         indexes.remove(tableName);
         primaryKeyIndexes.remove(tableName);
         indexedColumns.remove(tableName);
+        
+        // Also delete persisted index files
+        deleteTableIndexFiles(tableName);
+        
         log.info("Dropped all indexes for table {}", tableName);
     }
     
@@ -413,5 +442,138 @@ public class IndexManager {
         }
         
         return names;
+    }
+    
+    // ==================== Persistence Methods ====================
+    
+    /**
+     * Saves all indexes to disk.
+     */
+    public void saveAllIndexes() {
+        log.info("Saving all indexes to disk...");
+        int savedCount = 0;
+        
+        // Save primary key indexes
+        for (var tableEntry : primaryKeyIndexes.entrySet()) {
+            for (var indexEntry : tableEntry.getValue().entrySet()) {
+                try {
+                    saveIndex(indexEntry.getValue());
+                    savedCount++;
+                } catch (IOException e) {
+                    log.error("Failed to save index: {}", indexEntry.getValue().getIndexName(), e);
+                }
+            }
+        }
+        
+        // Save regular indexes
+        for (var tableEntry : indexes.entrySet()) {
+            for (var indexEntry : tableEntry.getValue().entrySet()) {
+                try {
+                    saveIndex(indexEntry.getValue());
+                    savedCount++;
+                } catch (IOException e) {
+                    log.error("Failed to save index: {}", indexEntry.getValue().getIndexName(), e);
+                }
+            }
+        }
+        
+        log.info("Saved {} indexes to disk", savedCount);
+    }
+    
+    /**
+     * Saves a single index to disk.
+     */
+    public void saveIndex(BTreeIndex index) throws IOException {
+        Path indexFile = indexesDir.resolve(index.getIndexName() + ".idx");
+        index.saveToFile(indexFile.toFile());
+    }
+    
+    /**
+     * Saves all indexes for a specific table.
+     */
+    public void saveTableIndexes(String tableName) {
+        Map<String, BTreeIndex> pkIdx = primaryKeyIndexes.get(tableName);
+        if (pkIdx != null) {
+            for (BTreeIndex idx : pkIdx.values()) {
+                try {
+                    saveIndex(idx);
+                } catch (IOException e) {
+                    log.error("Failed to save index: {}", idx.getIndexName(), e);
+                }
+            }
+        }
+        
+        Map<String, BTreeIndex> regIdx = indexes.get(tableName);
+        if (regIdx != null) {
+            for (BTreeIndex idx : regIdx.values()) {
+                try {
+                    saveIndex(idx);
+                } catch (IOException e) {
+                    log.error("Failed to save index: {}", idx.getIndexName(), e);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Loads all indexes from disk.
+     */
+    private void loadAllIndexes() {
+        if (!Files.exists(indexesDir)) {
+            return;
+        }
+        
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(indexesDir, "*.idx")) {
+            int loadedCount = 0;
+            for (Path file : stream) {
+                try {
+                    BTreeIndex index = BTreeIndex.loadFromFile(file.toFile());
+                    registerLoadedIndex(index);
+                    loadedCount++;
+                } catch (Exception e) {
+                    log.error("Failed to load index from: {}", file, e);
+                }
+            }
+            log.info("Loaded {} indexes from disk", loadedCount);
+        } catch (IOException e) {
+            log.error("Failed to list index files", e);
+        }
+    }
+    
+    /**
+     * Registers a loaded index into the appropriate maps.
+     */
+    private void registerLoadedIndex(BTreeIndex index) {
+        String tableName = index.getTableName();
+        String columnName = index.getColumnName();
+        
+        // Determine if it's a primary key index
+        if (index.getIndexName().startsWith("pk_")) {
+            primaryKeyIndexes.computeIfAbsent(tableName, k -> new ConcurrentHashMap<>())
+                             .put(columnName, index);
+        } else {
+            indexes.computeIfAbsent(tableName, k -> new ConcurrentHashMap<>())
+                   .put(columnName, index);
+        }
+        
+        indexedColumns.computeIfAbsent(tableName, k -> ConcurrentHashMap.newKeySet())
+                      .add(columnName);
+        
+        log.debug("Registered loaded index: {} on {}.{}", 
+                  index.getIndexName(), tableName, columnName);
+    }
+    
+    /**
+     * Deletes index files for a table.
+     */
+    public void deleteTableIndexFiles(String tableName) {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(indexesDir, "*_" + tableName + "_*.idx")) {
+            for (Path file : stream) {
+                Files.deleteIfExists(file);
+                log.debug("Deleted index file: {}", file);
+            }
+        } catch (IOException e) {
+            log.error("Failed to delete index files for table: {}", tableName, e);
+        }
     }
 }

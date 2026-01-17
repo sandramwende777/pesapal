@@ -285,6 +285,52 @@ public class FileStorageService {
     }
     
     /**
+     * Reads rows by their IDs (optimized for index lookups).
+     * Only returns rows that match the given set of row IDs.
+     * This is more efficient than reading all rows and filtering.
+     */
+    public List<Row> readRowsByIds(String tableName, Set<Long> rowIds) throws IOException {
+        if (!schemaCache.containsKey(tableName)) {
+            throw new IllegalArgumentException("Table not found: " + tableName);
+        }
+        
+        if (rowIds == null || rowIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        ReadWriteLock lock = getTableLock(tableName);
+        lock.readLock().lock();
+        try {
+            List<Row> rows = new ArrayList<>(rowIds.size());
+            List<Page> pages = getPages(tableName);
+            
+            // Early exit if we found all rows
+            int foundCount = 0;
+            int targetCount = rowIds.size();
+            
+            for (Page page : pages) {
+                for (byte[] rowData : page.getAllRows()) {
+                    Row row = Page.deserializeRow(rowData);
+                    if (row.isActive() && rowIds.contains(row.getRowId())) {
+                        rows.add(row);
+                        foundCount++;
+                        
+                        // Early exit optimization
+                        if (foundCount >= targetCount) {
+                            return rows;
+                        }
+                    }
+                }
+            }
+            
+            return rows;
+            
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+    
+    /**
      * Updates rows matching the predicate.
      * Returns the number of rows updated.
      */

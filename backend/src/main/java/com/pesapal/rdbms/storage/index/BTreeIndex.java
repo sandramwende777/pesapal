@@ -1,8 +1,10 @@
 package com.pesapal.rdbms.storage.index;
 
 import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
 
@@ -254,6 +256,134 @@ public class BTreeIndex {
     public String toString() {
         return String.format("BTreeIndex[%s on %s.%s, keys=%d, unique=%b]",
                 indexName, tableName, columnName, getKeyCount(), unique);
+    }
+    
+    // ==================== Persistence Methods ====================
+    
+    /**
+     * Serializes the index to a file.
+     * Format: indexName, tableName, columnName, unique, stats, then entries.
+     */
+    public void saveToFile(File file) throws IOException {
+        try (DataOutputStream dos = new DataOutputStream(
+                new BufferedOutputStream(new FileOutputStream(file)))) {
+            
+            // Write metadata
+            dos.writeUTF(indexName);
+            dos.writeUTF(tableName);
+            dos.writeUTF(columnName);
+            dos.writeBoolean(unique);
+            
+            // Write statistics
+            dos.writeLong(insertCount);
+            dos.writeLong(lookupCount);
+            dos.writeLong(rangeQueryCount);
+            
+            // Write number of entries
+            dos.writeInt(tree.size());
+            
+            // Write each entry
+            for (var entry : tree.entrySet()) {
+                // Write key
+                writeObject(dos, entry.getKey().value);
+                
+                // Write row IDs
+                Set<Long> rowIds = entry.getValue();
+                dos.writeInt(rowIds.size());
+                for (Long rowId : rowIds) {
+                    dos.writeLong(rowId);
+                }
+            }
+            
+            log.info("Saved index {} to disk: {} keys", indexName, tree.size());
+        }
+    }
+    
+    /**
+     * Loads an index from a file.
+     */
+    public static BTreeIndex loadFromFile(File file) throws IOException {
+        try (DataInputStream dis = new DataInputStream(
+                new BufferedInputStream(new FileInputStream(file)))) {
+            
+            // Read metadata
+            String indexName = dis.readUTF();
+            String tableName = dis.readUTF();
+            String columnName = dis.readUTF();
+            boolean unique = dis.readBoolean();
+            
+            BTreeIndex index = new BTreeIndex(indexName, tableName, columnName, unique);
+            
+            // Read statistics
+            index.insertCount = dis.readLong();
+            index.lookupCount = dis.readLong();
+            index.rangeQueryCount = dis.readLong();
+            
+            // Read number of entries
+            int entryCount = dis.readInt();
+            
+            // Read each entry
+            for (int i = 0; i < entryCount; i++) {
+                // Read key
+                Object key = readObject(dis);
+                
+                // Read row IDs
+                int rowIdCount = dis.readInt();
+                Set<Long> rowIds = Collections.synchronizedSet(new HashSet<>());
+                for (int j = 0; j < rowIdCount; j++) {
+                    rowIds.add(dis.readLong());
+                }
+                
+                index.tree.put(new ComparableWrapper(key), rowIds);
+            }
+            
+            log.info("Loaded index {} from disk: {} keys", indexName, index.tree.size());
+            return index;
+        }
+    }
+    
+    /**
+     * Writes an object to the stream with type information.
+     */
+    private static void writeObject(DataOutputStream dos, Object value) throws IOException {
+        if (value == null) {
+            dos.writeByte(0);
+        } else if (value instanceof Integer) {
+            dos.writeByte(1);
+            dos.writeInt((Integer) value);
+        } else if (value instanceof Long) {
+            dos.writeByte(2);
+            dos.writeLong((Long) value);
+        } else if (value instanceof Double) {
+            dos.writeByte(3);
+            dos.writeDouble((Double) value);
+        } else if (value instanceof String) {
+            dos.writeByte(4);
+            dos.writeUTF((String) value);
+        } else if (value instanceof Boolean) {
+            dos.writeByte(5);
+            dos.writeBoolean((Boolean) value);
+        } else {
+            // Default: serialize as string
+            dos.writeByte(4);
+            dos.writeUTF(String.valueOf(value));
+        }
+    }
+    
+    /**
+     * Reads an object from the stream.
+     */
+    private static Object readObject(DataInputStream dis) throws IOException {
+        byte type = dis.readByte();
+        return switch (type) {
+            case 0 -> null;
+            case 1 -> dis.readInt();
+            case 2 -> dis.readLong();
+            case 3 -> dis.readDouble();
+            case 4 -> dis.readUTF();
+            case 5 -> dis.readBoolean();
+            default -> null;
+        };
     }
     
     /**

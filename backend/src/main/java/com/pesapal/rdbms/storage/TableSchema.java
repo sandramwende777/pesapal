@@ -1,5 +1,6 @@
 package com.pesapal.rdbms.storage;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -7,6 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Represents the schema (metadata) of a table.
@@ -62,18 +64,20 @@ public class TableSchema {
         return columns.stream().anyMatch(c -> c.getName().equals(columnName));
     }
     
+    @JsonIgnore
     public List<String> getPrimaryKeyColumns() {
         return keys.stream()
                 .filter(k -> k.getKeyType() == KeyType.PRIMARY)
                 .map(KeySchema::getColumnName)
-                .toList();
+                .collect(Collectors.toList());
     }
     
+    @JsonIgnore
     public List<String> getUniqueKeyColumns() {
         return keys.stream()
                 .filter(k -> k.getKeyType() == KeyType.UNIQUE)
                 .map(KeySchema::getColumnName)
-                .toList();
+                .collect(Collectors.toList());
     }
     
     public boolean hasIndex(String columnName) {

@@ -254,6 +254,12 @@ public class FileBasedRdbmsService {
                         request.getTableName(), allRows.size());
             }
             
+            // Apply ORDER BY
+            if (request.getOrderBy() != null && !request.getOrderBy().isEmpty()) {
+                filteredRows = applyOrderBy(filteredRows, request.getOrderBy());
+                log.debug("Applied ORDER BY: {} columns", request.getOrderBy().size());
+            }
+            
             // Apply OFFSET
             if (request.getOffset() != null && request.getOffset() > 0) {
                 filteredRows = filteredRows.subList(
@@ -302,7 +308,7 @@ public class FileBasedRdbmsService {
     
     /**
      * Selects rows with index optimization.
-     * Tries to use indexes for WHERE clause conditions.
+     * Uses readRowsByIds for optimized index-based lookups.
      */
     @SuppressWarnings("unchecked")
     private List<Row> selectWithIndexOptimization(
@@ -365,17 +371,24 @@ public class FileBasedRdbmsService {
                 execBuilder.indexUsed(true)
                           .indexName(index.getIndexName())
                           .indexColumn(columnName)
-                          .indexOperation(indexOperation);
+                          .indexOperation(indexOperation)
+                          .rowsScanned(matchingRowIds.size());  // Only scanning matched rows!
                 
-                log.info("SELECT on {}: Using index '{}' on column '{}' ({}) -> {} candidate rows",
+                log.info("SELECT on {}: Using index '{}' on column '{}' ({}) -> {} candidate rows (OPTIMIZED)",
                         tableName, index.getIndexName(), columnName, indexOperation, matchingRowIds.size());
                 
-                // Filter rows by matching IDs, then apply remaining conditions
-                Set<Long> finalMatchingRowIds = matchingRowIds;
-                return allRows.stream()
-                        .filter(row -> finalMatchingRowIds.contains(row.getRowId()))
-                        .filter(row -> matchesWhere(row, where))
-                        .collect(Collectors.toList());
+                try {
+                    // OPTIMIZED: Fetch only the rows we need by ID
+                    List<Row> candidateRows = storage.readRowsByIds(tableName, matchingRowIds);
+                    
+                    // Apply remaining WHERE conditions (for multi-column WHERE)
+                    return candidateRows.stream()
+                            .filter(row -> matchesWhere(row, where))
+                            .collect(Collectors.toList());
+                } catch (IOException e) {
+                    log.error("Failed to read rows by ID, falling back to full scan", e);
+                    // Fall through to full scan
+                }
             }
         }
         
@@ -748,5 +761,42 @@ public class FileBasedRdbmsService {
         }
         
         return joined;
+    }
+    
+    /**
+     * Applies ORDER BY sorting to the list of rows.
+     */
+    private List<Row> applyOrderBy(List<Row> rows, List<SelectRequest.OrderBy> orderByList) {
+        if (orderByList == null || orderByList.isEmpty()) {
+            return rows;
+        }
+        
+        // Create a mutable copy for sorting
+        List<Row> sortedRows = new ArrayList<>(rows);
+        
+        // Build a comparator chain for multiple ORDER BY columns
+        Comparator<Row> comparator = null;
+        
+        for (SelectRequest.OrderBy orderBy : orderByList) {
+            Comparator<Row> columnComparator = (r1, r2) -> {
+                Object v1 = r1.getValue(orderBy.getColumn());
+                Object v2 = r2.getValue(orderBy.getColumn());
+                
+                int result = compareValues(v1, v2);
+                return orderBy.isDescending() ? -result : result;
+            };
+            
+            if (comparator == null) {
+                comparator = columnComparator;
+            } else {
+                comparator = comparator.thenComparing(columnComparator);
+            }
+        }
+        
+        if (comparator != null) {
+            sortedRows.sort(comparator);
+        }
+        
+        return sortedRows;
     }
 }
