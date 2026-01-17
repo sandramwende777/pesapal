@@ -3,7 +3,7 @@
   "columns" : [ {
     "name" : "id",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -12,7 +12,7 @@
   }, {
     "name" : "order_id",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -21,7 +21,7 @@
   }, {
     "name" : "product_id",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -30,7 +30,7 @@
   }, {
     "name" : "quantity",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -39,7 +39,7 @@
   }, {
     "name" : "price",
     "dataType" : "DECIMAL",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -63,8 +63,8 @@
     "unique" : false,
     "indexType" : "BTREE"
   } ],
-  "createdAt" : "2026-01-17T22:04:14.491076",
-  "updatedAt" : "2026-01-17T22:04:14.491095",
+  "createdAt" : "2026-01-17T22:35:32.138044",
+  "updatedAt" : "2026-01-17T22:35:32.138084",
   "rowCount" : 0,
   "nextRowId" : 1
 }

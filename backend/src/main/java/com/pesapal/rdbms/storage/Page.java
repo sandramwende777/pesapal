@@ -1,5 +1,6 @@
 package com.pesapal.rdbms.storage;
 
+import com.pesapal.rdbms.config.RdbmsConstants;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -9,29 +10,51 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Represents a fixed-size page of data (like real databases use).
+ * Represents a fixed-size page of data using slotted page architecture.
  * 
- * Page Layout (4KB default):
+ * <p>This implementation mirrors how production databases like PostgreSQL
+ * and MySQL organize data in fixed-size blocks for efficient I/O.</p>
+ * 
+ * <h2>Page Layout ({@value RdbmsConstants#PAGE_SIZE} bytes)</h2>
+ * <pre>
  * +------------------+
  * | Page Header (32B)|  - Page ID, row count, free space offset, flags
  * +------------------+
  * | Row Directory    |  - Array of (offset, length) pairs for each row
- * | (grows down)     |
+ * | (grows down)     |    Each slot is 8 bytes: 4B offset + 4B length
  * +------------------+
- * |   Free Space     |
+ * |   Free Space     |  - Available space for new rows
  * +------------------+
- * | Row Data         |  - Actual row data (grows up from bottom)
- * | (grows up)       |
+ * | Row Data         |  - Actual serialized row data
+ * | (grows up)       |    Grows from bottom of page upward
  * +------------------+
+ * </pre>
  * 
- * This is similar to how PostgreSQL and MySQL store data in pages.
+ * <h2>Header Layout (32 bytes)</h2>
+ * <ul>
+ *   <li>Offset 0-3: Page ID (4 bytes)</li>
+ *   <li>Offset 4-7: Row count (4 bytes)</li>
+ *   <li>Offset 8-11: Free space start - where row directory ends (4 bytes)</li>
+ *   <li>Offset 12-15: Free space end - where row data starts (4 bytes)</li>
+ *   <li>Offset 16-19: Flags (dirty, leaf, etc.) (4 bytes)</li>
+ *   <li>Offset 20-31: Reserved for future use (12 bytes)</li>
+ * </ul>
+ * 
+ * @author Pesapal RDBMS Team
+ * @version 2.1
+ * @see RdbmsConstants#PAGE_SIZE
  */
 @Slf4j
 public class Page {
     
-    public static final int PAGE_SIZE = 4096;           // 4KB pages
-    public static final int HEADER_SIZE = 32;           // Page header
-    public static final int SLOT_SIZE = 8;              // Each slot: 4B offset + 4B length
+    /** Page size in bytes (4KB) - same as PostgreSQL default */
+    public static final int PAGE_SIZE = RdbmsConstants.PAGE_SIZE;
+    
+    /** Page header size in bytes */
+    public static final int HEADER_SIZE = RdbmsConstants.PAGE_HEADER_SIZE;
+    
+    /** Size of each slot entry (offset + length) */
+    public static final int SLOT_SIZE = RdbmsConstants.SLOT_SIZE;
     
     @Getter
     private final int pageId;

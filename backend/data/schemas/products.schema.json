@@ -3,7 +3,7 @@
   "columns" : [ {
     "name" : "id",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -21,7 +21,7 @@
   }, {
     "name" : "description",
     "dataType" : "TEXT",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : true,
@@ -30,7 +30,7 @@
   }, {
     "name" : "price",
     "dataType" : "DECIMAL",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -39,7 +39,7 @@
   }, {
     "name" : "stock",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -48,7 +48,7 @@
   }, {
     "name" : "category_id",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : true,
@@ -67,8 +67,8 @@
     "unique" : false,
     "indexType" : "BTREE"
   } ],
-  "createdAt" : "2026-01-17T22:04:14.488114",
-  "updatedAt" : "2026-01-17T22:04:14.490361",
+  "createdAt" : "2026-01-17T22:35:32.134866",
+  "updatedAt" : "2026-01-17T22:35:32.137392",
   "rowCount" : 4,
   "nextRowId" : 9
 }

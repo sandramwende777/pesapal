@@ -3,7 +3,7 @@
   "columns" : [ {
     "name" : "id",
     "dataType" : "INTEGER",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : false,
@@ -21,7 +21,7 @@
   }, {
     "name" : "description",
     "dataType" : "TEXT",
-    "maxLength" : null,
+    "maxLength" : 255,
     "precision" : null,
     "scale" : null,
     "nullable" : true,
@@ -40,8 +40,8 @@
     "referencesColumn" : null
   } ],
   "indexes" : [ ],
-  "createdAt" : "2026-01-17T22:04:14.467743",
-  "updatedAt" : "2026-01-17T22:04:14.4876",
+  "createdAt" : "2026-01-17T22:35:32.113771",
+  "updatedAt" : "2026-01-17T22:35:32.134316",
   "rowCount" : 3,
   "nextRowId" : 7
 }

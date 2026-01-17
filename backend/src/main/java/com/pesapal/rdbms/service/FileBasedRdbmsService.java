@@ -1,9 +1,12 @@
 package com.pesapal.rdbms.service;
 
+import com.pesapal.rdbms.config.RdbmsConstants;
 import com.pesapal.rdbms.dto.*;
+import com.pesapal.rdbms.exception.*;
 import com.pesapal.rdbms.storage.*;
 import com.pesapal.rdbms.storage.index.IndexManager;
 import com.pesapal.rdbms.storage.index.QueryExecution;
+import com.pesapal.rdbms.util.ValidationUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,17 +17,30 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * File-based RDBMS Service.
+ * Core RDBMS service implementing file-based storage.
  * 
- * This is the core database engine that uses custom file-based storage
- * instead of JPA/H2. All data is stored in files that we manage directly.
+ * <p>This is the main database engine that provides all CRUD operations
+ * using custom file-based storage instead of external databases like H2 or SQLite.</p>
  * 
- * Key features:
- * - Page-based storage for row data (.dat files)
- * - JSON schema files for metadata
- * - B-Tree indexes that optimize queries (with range query support)
- * - Proper constraint enforcement (PK, UK)
- * - Query execution logging showing index usage
+ * <h2>Architecture</h2>
+ * <ul>
+ *   <li><b>Storage Layer</b>: Page-based binary storage (.dat files with 4KB pages)</li>
+ *   <li><b>Schema Layer</b>: JSON metadata files (.schema.json)</li>
+ *   <li><b>Index Layer</b>: B-Tree indexes with O(log n) lookups and range query support</li>
+ *   <li><b>Constraint Layer</b>: PRIMARY KEY and UNIQUE enforcement via indexes</li>
+ * </ul>
+ * 
+ * <h2>Supported Operations</h2>
+ * <ul>
+ *   <li>DDL: CREATE TABLE, DROP TABLE</li>
+ *   <li>DML: INSERT, SELECT, UPDATE, DELETE</li>
+ *   <li>Queries: WHERE, ORDER BY, LIMIT, OFFSET, JOIN</li>
+ * </ul>
+ * 
+ * @author Pesapal RDBMS Team
+ * @version 2.1
+ * @see FileStorageService
+ * @see IndexManager
  */
 @Service
 @RequiredArgsConstructor
@@ -40,20 +56,40 @@ public class FileBasedRdbmsService {
     // ==================== Table Operations ====================
     
     /**
-     * Creates a new table with the given schema.
+     * Creates a new table with the specified schema.
+     * 
+     * <p>This method validates the table definition, creates the schema file,
+     * initializes the data file, and sets up any required indexes.</p>
+     *
+     * @param request the table creation request containing columns, keys, and indexes
+     * @return the created table schema
+     * @throws InvalidSqlException if the table name or column definitions are invalid
+     * @throws RdbmsException if a table with the same name already exists
+     * @throws StorageException if there's an error writing to storage
      */
     public TableSchema createTable(CreateTableRequest request) {
+        // Validate input
+        Objects.requireNonNull(request, "CreateTableRequest cannot be null");
+        ValidationUtils.validateTableName(request.getTableName());
+        
+        if (request.getColumns() == null || request.getColumns().isEmpty()) {
+            throw new InvalidSqlException("Table must have at least one column");
+        }
+        
         try {
             // Build schema from request
             TableSchema schema = new TableSchema(request.getTableName());
             
-            // Add columns
+            // Add and validate columns
             int ordinal = 0;
             for (CreateTableRequest.ColumnDefinition colDef : request.getColumns()) {
+                ValidationUtils.validateColumnName(colDef.getName());
+                
                 ColumnSchema column = new ColumnSchema();
                 column.setName(colDef.getName());
                 column.setDataType(colDef.getDataType());
-                column.setMaxLength(colDef.getMaxLength());
+                column.setMaxLength(colDef.getMaxLength() != null ? 
+                        colDef.getMaxLength() : RdbmsConstants.DEFAULT_VARCHAR_LENGTH);
                 column.setNullable(colDef.getNullable() != null ? colDef.getNullable() : true);
                 column.setDefaultValue(colDef.getDefaultValue() != null ? 
                         String.valueOf(colDef.getDefaultValue()) : null);
@@ -64,6 +100,7 @@ public class FileBasedRdbmsService {
             // Add primary keys
             if (request.getPrimaryKeys() != null) {
                 for (String pkColumn : request.getPrimaryKeys()) {
+                    validateColumnExists(schema, pkColumn);
                     schema.addKey(new KeySchema(pkColumn, KeyType.PRIMARY, null, null));
                 }
             }
@@ -71,6 +108,7 @@ public class FileBasedRdbmsService {
             // Add unique keys
             if (request.getUniqueKeys() != null) {
                 for (String ukColumn : request.getUniqueKeys()) {
+                    validateColumnExists(schema, ukColumn);
                     schema.addKey(new KeySchema(ukColumn, KeyType.UNIQUE, null, null));
                 }
             }
@@ -78,6 +116,7 @@ public class FileBasedRdbmsService {
             // Add indexes
             if (request.getIndexes() != null) {
                 for (CreateTableRequest.IndexDefinition idxDef : request.getIndexes()) {
+                    validateColumnExists(schema, idxDef.getColumnName());
                     schema.addIndex(new IndexSchema(
                             idxDef.getIndexName(),
                             idxDef.getColumnName(),
@@ -90,16 +129,7 @@ public class FileBasedRdbmsService {
             storage.createTable(schema);
             
             // Create indexes using IndexManager
-            for (String pkColumn : schema.getPrimaryKeyColumns()) {
-                indexManager.createPrimaryKeyIndex(schema.getTableName(), pkColumn);
-            }
-            for (String ukColumn : schema.getUniqueKeyColumns()) {
-                indexManager.createUniqueIndex(schema.getTableName(), ukColumn);
-            }
-            for (IndexSchema idx : schema.getIndexes()) {
-                indexManager.createIndex(schema.getTableName(), idx.getColumnName(), 
-                                         idx.getIndexName(), idx.isUnique());
-            }
+            createTableIndexes(schema);
             
             log.info("Created table: {} with {} columns, {} indexes", 
                     schema.getTableName(), schema.getColumns().size(),
@@ -108,15 +138,54 @@ public class FileBasedRdbmsService {
             return schema;
             
         } catch (IOException e) {
-            throw new RuntimeException("Failed to create table: " + e.getMessage(), e);
+            throw StorageException.writeError(request.getTableName(), e);
         }
     }
     
     /**
-     * Drops a table.
+     * Validates that a column exists in the schema.
+     */
+    private void validateColumnExists(TableSchema schema, String columnName) {
+        if (!schema.hasColumn(columnName)) {
+            throw new InvalidSqlException(
+                    String.format("Column '%s' not found in table definition", columnName));
+        }
+    }
+    
+    /**
+     * Creates all indexes for a table based on its schema.
+     */
+    private void createTableIndexes(TableSchema schema) {
+        String tableName = schema.getTableName();
+        
+        for (String pkColumn : schema.getPrimaryKeyColumns()) {
+            indexManager.createPrimaryKeyIndex(tableName, pkColumn);
+        }
+        for (String ukColumn : schema.getUniqueKeyColumns()) {
+            indexManager.createUniqueIndex(tableName, ukColumn);
+        }
+        for (IndexSchema idx : schema.getIndexes()) {
+            indexManager.createIndex(tableName, idx.getColumnName(), 
+                                     idx.getIndexName(), idx.isUnique());
+        }
+    }
+    
+    /**
+     * Drops a table and all its associated data.
+     * 
+     * <p>This removes the schema file, data file, and all indexes for the table.</p>
+     *
+     * @param tableName the name of the table to drop
+     * @throws TableNotFoundException if the table does not exist
+     * @throws StorageException if there's an error removing files
      */
     public void dropTable(String tableName) {
+        ValidationUtils.validateTableName(tableName);
+        
         try {
+            if (!storage.tableExists(tableName)) {
+                throw new TableNotFoundException(tableName);
+            }
             storage.dropTable(tableName);
             indexManager.dropTableIndexes(tableName);
             log.info("Dropped table: {}", tableName);

@@ -1,6 +1,7 @@
 package com.pesapal.rdbms.service;
 
 import com.pesapal.rdbms.dto.*;
+import com.pesapal.rdbms.exception.InvalidSqlException;
 import com.pesapal.rdbms.storage.DataType;
 import com.pesapal.rdbms.storage.TableSchema;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +15,28 @@ import java.util.stream.Collectors;
 
 /**
  * SQL Parser for the file-based RDBMS.
- * Parses SQL statements and delegates to FileBasedRdbmsService.
+ * 
+ * <p>This service parses SQL statements and translates them into method calls
+ * on the {@link FileBasedRdbmsService}. It supports a subset of standard SQL
+ * including DDL and DML operations.</p>
+ * 
+ * <h2>Supported SQL Statements</h2>
+ * <ul>
+ *   <li><b>DDL:</b> CREATE TABLE, DROP TABLE</li>
+ *   <li><b>DML:</b> INSERT, SELECT, UPDATE, DELETE</li>
+ *   <li><b>Queries:</b> WHERE, ORDER BY, LIMIT, OFFSET, JOIN</li>
+ *   <li><b>Utility:</b> SHOW TABLES, SHOW INDEXES, DESCRIBE, EXPLAIN</li>
+ * </ul>
+ * 
+ * <h2>Example Usage</h2>
+ * <pre>{@code
+ * // Via the service
+ * Object result = sqlParserService.executeSql("SELECT * FROM users WHERE id = 1");
+ * }</pre>
+ * 
+ * @author Pesapal RDBMS Team
+ * @version 2.1
+ * @see FileBasedRdbmsService
  */
 @Service
 @RequiredArgsConstructor
@@ -23,7 +45,22 @@ public class FileBasedSqlParserService {
     
     private final FileBasedRdbmsService rdbmsService;
     
+    /**
+     * Executes a SQL statement and returns the result.
+     *
+     * @param sql the SQL statement to execute
+     * @return the result of the SQL operation (varies by statement type)
+     * @throws InvalidSqlException if the SQL syntax is invalid
+     * @throws com.pesapal.rdbms.exception.TableNotFoundException if a referenced table doesn't exist
+     * @throws com.pesapal.rdbms.exception.ConstraintViolationException if a constraint is violated
+     */
     public Object executeSql(String sql) {
+        // Validate input
+        if (sql == null || sql.isBlank()) {
+            throw new InvalidSqlException("SQL statement cannot be empty");
+        }
+        
+        // Normalize whitespace
         sql = sql.trim().replaceAll("\\s+", " ");
         
         // Remove trailing semicolon if present
@@ -31,33 +68,39 @@ public class FileBasedSqlParserService {
             sql = sql.substring(0, sql.length() - 1).trim();
         }
         
-        // Handle EXPLAIN prefix
-        if (sql.toUpperCase().startsWith("EXPLAIN ")) {
+        log.debug("Executing SQL: {}", sql);
+        
+        // Route to appropriate parser based on statement type
+        String upperSql = sql.toUpperCase();
+        
+        if (upperSql.startsWith("EXPLAIN ")) {
             return parseExplain(sql);
-        } else if (sql.toUpperCase().startsWith("CREATE TABLE")) {
+        } else if (upperSql.startsWith("CREATE TABLE")) {
             return parseCreateTable(sql);
-        } else if (sql.toUpperCase().startsWith("DROP TABLE")) {
+        } else if (upperSql.startsWith("DROP TABLE")) {
             return parseDropTable(sql);
-        } else if (sql.toUpperCase().startsWith("INSERT INTO")) {
+        } else if (upperSql.startsWith("INSERT INTO")) {
             return parseInsert(sql);
-        } else if (sql.toUpperCase().startsWith("SELECT")) {
+        } else if (upperSql.startsWith("SELECT")) {
             // Check if it's a JOIN
-            if (sql.toUpperCase().contains(" JOIN ")) {
+            if (upperSql.contains(" JOIN ")) {
                 return parseJoin(sql);
             }
             return parseSelect(sql);
-        } else if (sql.toUpperCase().startsWith("UPDATE")) {
+        } else if (upperSql.startsWith("UPDATE")) {
             return parseUpdate(sql);
-        } else if (sql.toUpperCase().startsWith("DELETE FROM")) {
+        } else if (upperSql.startsWith("DELETE FROM")) {
             return parseDelete(sql);
-        } else if (sql.toUpperCase().startsWith("SHOW TABLES")) {
+        } else if (upperSql.startsWith("SHOW TABLES")) {
             return rdbmsService.listTables();
-        } else if (sql.toUpperCase().startsWith("SHOW INDEXES")) {
+        } else if (upperSql.startsWith("SHOW INDEXES")) {
             return rdbmsService.getIndexStats();
-        } else if (sql.toUpperCase().startsWith("DESCRIBE") || sql.toUpperCase().startsWith("DESC")) {
+        } else if (upperSql.startsWith("DESCRIBE") || upperSql.startsWith("DESC")) {
             return parseDescribe(sql);
         } else {
-            throw new IllegalArgumentException("Unsupported SQL statement: " + sql);
+            throw new InvalidSqlException(
+                    "Unsupported SQL statement. Supported: SELECT, INSERT, UPDATE, DELETE, " +
+                    "CREATE TABLE, DROP TABLE, SHOW TABLES, SHOW INDEXES, DESCRIBE, EXPLAIN", sql);
         }
     }
     
