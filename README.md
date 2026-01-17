@@ -303,14 +303,20 @@ DROP TABLE employees;
 - `IS NULL`, `IS NOT NULL` - Null checks
 - `AND` - Combine conditions
 
-### Limitations
+### Current Limitations
 
-- OR conditions not supported (only AND)
-- No aggregate functions (COUNT, SUM, AVG)
-- No ORDER BY clause
+- OR conditions not supported (only AND in WHERE clause)
+- No aggregate functions (COUNT, SUM, AVG, MIN, MAX)
+- No GROUP BY clause
 - No subqueries
-- Indexes are rebuilt in memory on startup
-- No transaction support (ACID)
+- No transaction support (ACID) - no BEGIN/COMMIT/ROLLBACK
+- Single-column indexes only (no composite indexes)
+
+### Implemented Features (Previously Limitations)
+
+- ✅ **ORDER BY** - Now fully supported with ASC/DESC
+- ✅ **Index Persistence** - Indexes saved to `.idx` files on shutdown
+- ✅ **EXPLAIN** - Query execution plan showing index usage
 
 ## Project Structure
 
@@ -318,14 +324,17 @@ DROP TABLE employees;
 pesapal/
 ├── backend/
 │   └── src/main/java/com/pesapal/rdbms/
-│       ├── storage/               # *** THE CORE STORAGE ENGINE ***
+│       ├── storage/                      # *** THE CORE STORAGE ENGINE ***
 │       │   ├── FileStorageService.java   # File I/O, page management
 │       │   ├── Page.java                 # 4KB page with slotted format
-│       │   ├── InMemoryIndex.java        # Hash-based indexes
 │       │   ├── TableSchema.java          # Table metadata
 │       │   ├── ColumnSchema.java         # Column definitions
 │       │   ├── Row.java                  # Row data container
-│       │   └── DataType.java             # Supported types
+│       │   ├── DataType.java             # Supported types
+│       │   └── index/                    # *** B-TREE INDEX ENGINE ***
+│       │       ├── IndexManager.java     # Index lifecycle management
+│       │       ├── BTreeIndex.java       # B-Tree with O(log n) lookups
+│       │       └── QueryExecution.java   # Query plan/EXPLAIN support
 │       ├── service/
 │       │   ├── FileBasedRdbmsService.java    # CRUD operations
 │       │   └── FileBasedSqlParserService.java # SQL parsing
@@ -333,12 +342,21 @@ pesapal/
 │       │   └── FileBasedRdbmsController.java # REST API
 │       ├── repl/
 │       │   └── FileBasedReplRunner.java      # Interactive CLI
+│       ├── exception/                    # Custom exceptions
+│       │   ├── RdbmsException.java       # Base exception with error codes
+│       │   ├── TableNotFoundException.java
+│       │   ├── ConstraintViolationException.java
+│       │   └── InvalidSqlException.java
+│       ├── util/
+│       │   └── ValidationUtils.java      # Input validation
 │       └── config/
+│           ├── RdbmsConstants.java       # Configuration constants
 │           └── FileBasedDataInitializer.java # Sample data
 ├── frontend/                      # React web application
 └── data/                          # *** CREATED AT RUNTIME ***
-    ├── schemas/                   # JSON schema files
-    └── tables/                    # Binary data files
+    ├── schemas/                   # JSON schema files (.schema.json)
+    ├── tables/                    # Binary data files (.dat)
+    └── indexes/                   # Persisted B-Tree indexes (.idx)
 ```
 
 ## Why This Design?
@@ -359,7 +377,7 @@ cd backend
 
 ## Credits
 
-This project was built as an interview challenge to demonstrate building a database from scratch. The implementation is original, applying concepts from database internals literature.
+This project was built as an interview challenge to demonstrate building a database from scratch. The implementation is original, applying concepts from Spring Boot, React and also Database concepts, and usage of AI tools.
 
 ## License
 
