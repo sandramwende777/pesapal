@@ -67,8 +67,8 @@
     "unique" : false,
     "indexType" : "BTREE"
   } ],
-  "createdAt" : "2026-01-17T21:05:23.349098",
-  "updatedAt" : "2026-01-17T21:05:23.351398",
+  "createdAt" : "2026-01-17T21:27:48.269342",
+  "updatedAt" : "2026-01-17T21:27:48.271635",
   "rowCount" : 4,
   "nextRowId" : 9,
   "primaryKeyColumns" : [ "id" ],

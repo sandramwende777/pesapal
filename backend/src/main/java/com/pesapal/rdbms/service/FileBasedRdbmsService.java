@@ -2,6 +2,8 @@ package com.pesapal.rdbms.service;
 
 import com.pesapal.rdbms.dto.*;
 import com.pesapal.rdbms.storage.*;
+import com.pesapal.rdbms.storage.index.IndexManager;
+import com.pesapal.rdbms.storage.index.QueryExecution;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,11 +22,9 @@ import java.util.stream.Collectors;
  * Key features:
  * - Page-based storage for row data (.dat files)
  * - JSON schema files for metadata
- * - In-memory indexes that actually optimize queries
+ * - B-Tree indexes that optimize queries (with range query support)
  * - Proper constraint enforcement (PK, UK)
- * 
- * This demonstrates a TRUE RDBMS implementation, not a wrapper around
- * an existing database.
+ * - Query execution logging showing index usage
  */
 @Service
 @RequiredArgsConstructor
@@ -32,7 +32,10 @@ import java.util.stream.Collectors;
 public class FileBasedRdbmsService {
     
     private final FileStorageService storage;
-    private final InMemoryIndex indexService;
+    private final IndexManager indexManager;
+    
+    // Track last query execution for debugging
+    private QueryExecution lastQueryExecution;
     
     // ==================== Table Operations ====================
     
@@ -86,19 +89,21 @@ public class FileBasedRdbmsService {
             // Create table in storage
             storage.createTable(schema);
             
-            // Create indexes in memory
+            // Create indexes using IndexManager
             for (String pkColumn : schema.getPrimaryKeyColumns()) {
-                indexService.createPrimaryKeyIndex(schema.getTableName(), pkColumn);
+                indexManager.createPrimaryKeyIndex(schema.getTableName(), pkColumn);
             }
             for (String ukColumn : schema.getUniqueKeyColumns()) {
-                indexService.createIndex(schema.getTableName(), ukColumn, true);
+                indexManager.createUniqueIndex(schema.getTableName(), ukColumn);
             }
             for (IndexSchema idx : schema.getIndexes()) {
-                indexService.createIndex(schema.getTableName(), idx.getColumnName(), idx.isUnique());
+                indexManager.createIndex(schema.getTableName(), idx.getColumnName(), 
+                                         idx.getIndexName(), idx.isUnique());
             }
             
-            log.info("Created table: {} with {} columns", 
-                    schema.getTableName(), schema.getColumns().size());
+            log.info("Created table: {} with {} columns, {} indexes", 
+                    schema.getTableName(), schema.getColumns().size(),
+                    indexManager.getIndexNames(schema.getTableName()).size());
             
             return schema;
             
@@ -113,7 +118,7 @@ public class FileBasedRdbmsService {
     public void dropTable(String tableName) {
         try {
             storage.dropTable(tableName);
-            indexService.dropTableIndexes(tableName);
+            indexManager.dropTableIndexes(tableName);
             log.info("Dropped table: {}", tableName);
         } catch (IOException e) {
             throw new RuntimeException("Failed to drop table: " + e.getMessage(), e);
@@ -132,6 +137,20 @@ public class FileBasedRdbmsService {
      */
     public TableSchema getTable(String tableName) {
         return storage.getSchema(tableName);
+    }
+    
+    /**
+     * Gets index statistics.
+     */
+    public Map<String, Object> getIndexStats() {
+        return indexManager.getStats();
+    }
+    
+    /**
+     * Gets the last query execution details.
+     */
+    public QueryExecution getLastQueryExecution() {
+        return lastQueryExecution;
     }
     
     // ==================== CRUD Operations ====================
@@ -160,24 +179,23 @@ public class FileBasedRdbmsService {
                 }
             }
             
-            // Validate PRIMARY KEY constraints (using index for fast lookup!)
+            // Validate PRIMARY KEY constraints (using B-Tree index for O(log n) lookup!)
             for (String pkColumn : schema.getPrimaryKeyColumns()) {
                 Object value = request.getValues().get(pkColumn);
                 if (value == null) {
                     throw new IllegalArgumentException(
                             "Primary key column " + pkColumn + " cannot be null");
                 }
-                // Use index for O(1) lookup instead of O(n) scan!
-                if (indexService.primaryKeyExists(request.getTableName(), pkColumn, value)) {
+                if (indexManager.primaryKeyExists(request.getTableName(), pkColumn, value)) {
                     throw new IllegalArgumentException("Duplicate primary key value: " + value);
                 }
             }
             
-            // Validate UNIQUE constraints (using index for fast lookup!)
+            // Validate UNIQUE constraints
             for (String ukColumn : schema.getUniqueKeyColumns()) {
                 Object value = request.getValues().get(ukColumn);
                 if (value != null) {
-                    if (indexService.uniqueKeyExists(request.getTableName(), ukColumn, value)) {
+                    if (indexManager.uniqueKeyExists(request.getTableName(), ukColumn, value)) {
                         throw new IllegalArgumentException("Duplicate unique key value: " + value);
                     }
                 }
@@ -194,7 +212,7 @@ public class FileBasedRdbmsService {
             row.setRowId(rowId);
             
             // Update indexes
-            indexService.indexRow(request.getTableName(), row);
+            indexManager.onRowInserted(request.getTableName(), row);
             
             log.debug("Inserted row {} into {}", rowId, request.getTableName());
             
@@ -206,32 +224,47 @@ public class FileBasedRdbmsService {
     }
     
     /**
-     * Selects rows from a table.
+     * Selects rows from a table with index optimization.
      */
     public List<Map<String, Object>> select(SelectRequest request) {
         try {
+            long startTime = System.currentTimeMillis();
             TableSchema schema = storage.getSchema(request.getTableName());
-            List<Row> rows;
+            List<Row> allRows = storage.readAllRows(request.getTableName());
+            List<Row> filteredRows;
+            
+            // Build query execution info
+            QueryExecution.QueryExecutionBuilder execBuilder = QueryExecution.builder()
+                    .tableName(request.getTableName())
+                    .queryType("SELECT")
+                    .whereClause(request.getWhere())
+                    .selectedColumns(request.getColumns())
+                    .rowsScanned(allRows.size());
             
             // Check if we can use an index for the WHERE clause
             if (request.getWhere() != null && !request.getWhere().isEmpty()) {
-                rows = selectWithWhere(request.getTableName(), schema, request.getWhere());
+                filteredRows = selectWithIndexOptimization(
+                        request.getTableName(), allRows, request.getWhere(), execBuilder);
             } else {
                 // Full table scan
-                rows = storage.readAllRows(request.getTableName());
+                indexManager.recordFullTableScan();
+                execBuilder.indexUsed(false);
+                filteredRows = new ArrayList<>(allRows);
+                log.info("SELECT on {}: Full table scan ({} rows)", 
+                        request.getTableName(), allRows.size());
             }
             
             // Apply OFFSET
             if (request.getOffset() != null && request.getOffset() > 0) {
-                rows = rows.subList(
-                        Math.min(request.getOffset(), rows.size()), 
-                        rows.size()
+                filteredRows = filteredRows.subList(
+                        Math.min(request.getOffset(), filteredRows.size()), 
+                        filteredRows.size()
                 );
             }
             
             // Apply LIMIT
             if (request.getLimit() != null && request.getLimit() > 0) {
-                rows = rows.subList(0, Math.min(request.getLimit(), rows.size()));
+                filteredRows = filteredRows.subList(0, Math.min(request.getLimit(), filteredRows.size()));
             }
             
             // Project columns
@@ -241,15 +274,26 @@ public class FileBasedRdbmsService {
                             .map(ColumnSchema::getName)
                             .collect(Collectors.toSet());
             
-            return rows.stream()
+            List<Map<String, Object>> result = filteredRows.stream()
                     .map(row -> {
-                        Map<String, Object> result = new LinkedHashMap<>();
+                        Map<String, Object> rowMap = new LinkedHashMap<>();
                         for (String col : selectedColumns) {
-                            result.put(col, row.getValue(col));
+                            rowMap.put(col, row.getValue(col));
                         }
-                        return result;
+                        return rowMap;
                     })
                     .collect(Collectors.toList());
+            
+            // Record execution stats
+            long duration = System.currentTimeMillis() - startTime;
+            lastQueryExecution = execBuilder
+                    .rowsReturned(result.size())
+                    .executionTimeMs(duration)
+                    .build();
+            
+            log.info(lastQueryExecution.toLogMessage());
+            
+            return result;
                     
         } catch (IOException e) {
             throw new RuntimeException("Failed to select rows: " + e.getMessage(), e);
@@ -257,34 +301,144 @@ public class FileBasedRdbmsService {
     }
     
     /**
+     * Selects rows with index optimization.
+     * Tries to use indexes for WHERE clause conditions.
+     */
+    @SuppressWarnings("unchecked")
+    private List<Row> selectWithIndexOptimization(
+            String tableName, 
+            List<Row> allRows,
+            Map<String, Object> where,
+            QueryExecution.QueryExecutionBuilder execBuilder) {
+        
+        // Try each WHERE condition to find one that can use an index
+        for (var entry : where.entrySet()) {
+            String columnName = entry.getKey();
+            Object condition = entry.getValue();
+            
+            // Check if this column is indexed
+            if (!indexManager.isIndexed(tableName, columnName)) {
+                continue;
+            }
+            
+            Set<Long> matchingRowIds = null;
+            String indexOperation = null;
+            
+            if (condition instanceof Map) {
+                // Complex condition with operator
+                Map<String, Object> opCondition = (Map<String, Object>) condition;
+                String operator = (String) opCondition.get("op");
+                Object value = opCondition.get("value");
+                
+                switch (operator.toUpperCase()) {
+                    case "=":
+                        matchingRowIds = indexManager.findByKey(tableName, columnName, value);
+                        indexOperation = "EQUALITY_LOOKUP";
+                        break;
+                    case ">":
+                        matchingRowIds = indexManager.findGreaterThan(tableName, columnName, value, false);
+                        indexOperation = "RANGE_SCAN_GT";
+                        break;
+                    case ">=":
+                        matchingRowIds = indexManager.findGreaterThan(tableName, columnName, value, true);
+                        indexOperation = "RANGE_SCAN_GTE";
+                        break;
+                    case "<":
+                        matchingRowIds = indexManager.findLessThan(tableName, columnName, value, false);
+                        indexOperation = "RANGE_SCAN_LT";
+                        break;
+                    case "<=":
+                        matchingRowIds = indexManager.findLessThan(tableName, columnName, value, true);
+                        indexOperation = "RANGE_SCAN_LTE";
+                        break;
+                    // LIKE, IS NULL, etc. don't use index efficiently
+                }
+            } else {
+                // Simple equality condition
+                matchingRowIds = indexManager.findByKey(tableName, columnName, condition);
+                indexOperation = "EQUALITY_LOOKUP";
+            }
+            
+            if (matchingRowIds != null) {
+                // Index was used!
+                var index = indexManager.getIndex(tableName, columnName);
+                execBuilder.indexUsed(true)
+                          .indexName(index.getIndexName())
+                          .indexColumn(columnName)
+                          .indexOperation(indexOperation);
+                
+                log.info("SELECT on {}: Using index '{}' on column '{}' ({}) -> {} candidate rows",
+                        tableName, index.getIndexName(), columnName, indexOperation, matchingRowIds.size());
+                
+                // Filter rows by matching IDs, then apply remaining conditions
+                Set<Long> finalMatchingRowIds = matchingRowIds;
+                return allRows.stream()
+                        .filter(row -> finalMatchingRowIds.contains(row.getRowId()))
+                        .filter(row -> matchesWhere(row, where))
+                        .collect(Collectors.toList());
+            }
+        }
+        
+        // No usable index found - full table scan
+        indexManager.recordFullTableScan();
+        execBuilder.indexUsed(false);
+        log.info("SELECT on {}: No suitable index, full table scan ({} rows)", 
+                tableName, allRows.size());
+        
+        return allRows.stream()
+                .filter(row -> matchesWhere(row, where))
+                .collect(Collectors.toList());
+    }
+    
+    /**
      * Updates rows in a table.
      */
     public int update(UpdateRequest request) {
         try {
-            TableSchema schema = storage.getSchema(request.getTableName());
+            long startTime = System.currentTimeMillis();
+            List<Row> allRows = storage.readAllRows(request.getTableName());
             
-            // Build predicate from WHERE clause
-            java.util.function.Predicate<Row> predicate = row -> {
-                if (request.getWhere() == null || request.getWhere().isEmpty()) {
-                    return true;
-                }
-                return matchesWhere(row, request.getWhere());
-            };
-            
-            // TODO: Validate constraints after update
-            
-            int updated = storage.updateRows(
-                    request.getTableName(), 
-                    request.getSet(), 
-                    predicate
-            );
-            
-            // Rebuild indexes for this table (simple approach)
-            if (updated > 0) {
-                rebuildTableIndexes(request.getTableName());
+            // Find rows to update using index if possible
+            List<Row> rowsToUpdate;
+            if (request.getWhere() != null && !request.getWhere().isEmpty()) {
+                QueryExecution.QueryExecutionBuilder execBuilder = QueryExecution.builder()
+                        .tableName(request.getTableName())
+                        .queryType("UPDATE")
+                        .whereClause(request.getWhere())
+                        .rowsScanned(allRows.size());
+                
+                rowsToUpdate = selectWithIndexOptimization(
+                        request.getTableName(), allRows, request.getWhere(), execBuilder);
+                
+                lastQueryExecution = execBuilder.build();
+            } else {
+                rowsToUpdate = allRows;
             }
             
-            log.debug("Updated {} rows in {}", updated, request.getTableName());
+            // Update matching rows
+            int updated = 0;
+            for (Row row : rowsToUpdate) {
+                Row oldRow = new Row(row.getRowId(), new LinkedHashMap<>(row.getValues()));
+                
+                for (var entry : request.getSet().entrySet()) {
+                    row.setValue(entry.getKey(), entry.getValue());
+                }
+                
+                // Update index
+                indexManager.onRowUpdated(request.getTableName(), oldRow, row);
+                updated++;
+            }
+            
+            // Persist changes
+            if (updated > 0) {
+                java.util.function.Predicate<Row> predicate = row -> 
+                    matchesWhere(row, request.getWhere() != null ? request.getWhere() : Collections.emptyMap());
+                storage.updateRows(request.getTableName(), request.getSet(), predicate);
+            }
+            
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("UPDATE on {}: {} rows updated in {} ms", 
+                    request.getTableName(), updated, duration);
             
             return updated;
             
@@ -298,22 +452,41 @@ public class FileBasedRdbmsService {
      */
     public int delete(DeleteRequest request) {
         try {
-            // Build predicate from WHERE clause
-            java.util.function.Predicate<Row> predicate = row -> {
-                if (request.getWhere() == null || request.getWhere().isEmpty()) {
-                    return true;
-                }
-                return matchesWhere(row, request.getWhere());
-            };
+            long startTime = System.currentTimeMillis();
+            List<Row> allRows = storage.readAllRows(request.getTableName());
+            
+            // Find rows to delete using index if possible
+            List<Row> rowsToDelete;
+            if (request.getWhere() != null && !request.getWhere().isEmpty()) {
+                QueryExecution.QueryExecutionBuilder execBuilder = QueryExecution.builder()
+                        .tableName(request.getTableName())
+                        .queryType("DELETE")
+                        .whereClause(request.getWhere())
+                        .rowsScanned(allRows.size());
+                
+                rowsToDelete = selectWithIndexOptimization(
+                        request.getTableName(), allRows, request.getWhere(), execBuilder);
+                
+                lastQueryExecution = execBuilder.build();
+            } else {
+                rowsToDelete = allRows;
+            }
+            
+            // Update indexes
+            for (Row row : rowsToDelete) {
+                indexManager.onRowDeleted(request.getTableName(), row);
+            }
+            
+            // Delete from storage
+            java.util.function.Predicate<Row> predicate = row -> 
+                request.getWhere() == null || request.getWhere().isEmpty() || 
+                matchesWhere(row, request.getWhere());
             
             int deleted = storage.deleteRows(request.getTableName(), predicate);
             
-            // Rebuild indexes for this table
-            if (deleted > 0) {
-                rebuildTableIndexes(request.getTableName());
-            }
-            
-            log.debug("Deleted {} rows from {}", deleted, request.getTableName());
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("DELETE on {}: {} rows deleted in {} ms", 
+                    request.getTableName(), deleted, duration);
             
             return deleted;
             
@@ -329,33 +502,56 @@ public class FileBasedRdbmsService {
      */
     public List<Map<String, Object>> join(JoinRequest request) {
         try {
+            long startTime = System.currentTimeMillis();
             List<Row> leftRows = storage.readAllRows(request.getLeftTable());
             List<Row> rightRows = storage.readAllRows(request.getRightTable());
             
-            // Build hash index on right table for efficient join (hash join algorithm)
-            Map<Object, List<Row>> rightIndex = new HashMap<>();
-            for (Row rightRow : rightRows) {
-                Object rightValue = rightRow.getValue(request.getRightColumn());
-                rightIndex.computeIfAbsent(rightValue, k -> new ArrayList<>()).add(rightRow);
-            }
+            // Try to use index on right table's join column
+            boolean usingIndex = indexManager.isIndexed(request.getRightTable(), request.getRightColumn());
             
             List<Map<String, Object>> result = new ArrayList<>();
             
-            for (Row leftRow : leftRows) {
-                Object leftValue = leftRow.getValue(request.getLeftColumn());
-                List<Row> matchingRightRows = rightIndex.getOrDefault(leftValue, Collections.emptyList());
+            if (usingIndex) {
+                // Index nested loop join
+                log.info("JOIN: Using index on {}.{}", request.getRightTable(), request.getRightColumn());
                 
-                if (!matchingRightRows.isEmpty()) {
-                    // Inner/Left/Right: matched rows
-                    for (Row rightRow : matchingRightRows) {
-                        Map<String, Object> joined = buildJoinedRow(
-                                request, leftRow, rightRow);
-                        result.add(joined);
+                for (Row leftRow : leftRows) {
+                    Object leftValue = leftRow.getValue(request.getLeftColumn());
+                    Set<Long> matchingRightIds = indexManager.findByKey(
+                            request.getRightTable(), request.getRightColumn(), leftValue);
+                    
+                    if (matchingRightIds != null && !matchingRightIds.isEmpty()) {
+                        for (Row rightRow : rightRows) {
+                            if (matchingRightIds.contains(rightRow.getRowId())) {
+                                result.add(buildJoinedRow(request, leftRow, rightRow));
+                            }
+                        }
+                    } else if (request.getJoinType() == JoinRequest.JoinType.LEFT) {
+                        result.add(buildJoinedRow(request, leftRow, null));
                     }
-                } else if (request.getJoinType() == JoinRequest.JoinType.LEFT) {
-                    // Left join: include left row with nulls for right
-                    Map<String, Object> joined = buildJoinedRow(request, leftRow, null);
-                    result.add(joined);
+                }
+            } else {
+                // Hash join (build hash table on right side)
+                log.info("JOIN: Using hash join (no index on {}.{})", 
+                        request.getRightTable(), request.getRightColumn());
+                
+                Map<Object, List<Row>> rightIndex = new HashMap<>();
+                for (Row rightRow : rightRows) {
+                    Object rightValue = rightRow.getValue(request.getRightColumn());
+                    rightIndex.computeIfAbsent(rightValue, k -> new ArrayList<>()).add(rightRow);
+                }
+                
+                for (Row leftRow : leftRows) {
+                    Object leftValue = leftRow.getValue(request.getLeftColumn());
+                    List<Row> matchingRightRows = rightIndex.getOrDefault(leftValue, Collections.emptyList());
+                    
+                    if (!matchingRightRows.isEmpty()) {
+                        for (Row rightRow : matchingRightRows) {
+                            result.add(buildJoinedRow(request, leftRow, rightRow));
+                        }
+                    } else if (request.getJoinType() == JoinRequest.JoinType.LEFT) {
+                        result.add(buildJoinedRow(request, leftRow, null));
+                    }
                 }
             }
             
@@ -368,8 +564,7 @@ public class FileBasedRdbmsService {
                 for (Row rightRow : rightRows) {
                     Object rightValue = rightRow.getValue(request.getRightColumn());
                     if (!matchedRightValues.contains(rightValue)) {
-                        Map<String, Object> joined = buildJoinedRow(request, null, rightRow);
-                        result.add(joined);
+                        result.add(buildJoinedRow(request, null, rightRow));
                     }
                 }
             }
@@ -392,6 +587,12 @@ public class FileBasedRdbmsService {
                 result = result.subList(0, Math.min(request.getLimit(), result.size()));
             }
             
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("JOIN {}.{} = {}.{}: {} rows in {} ms", 
+                    request.getLeftTable(), request.getLeftColumn(),
+                    request.getRightTable(), request.getRightColumn(),
+                    result.size(), duration);
+            
             return result;
             
         } catch (IOException e) {
@@ -401,45 +602,10 @@ public class FileBasedRdbmsService {
     
     // ==================== Helper Methods ====================
     
-    /**
-     * Selects rows using WHERE clause, utilizing indexes when possible.
-     */
-    private List<Row> selectWithWhere(String tableName, TableSchema schema, 
-                                       Map<String, Object> where) throws IOException {
-        // Try to find an indexed column in the WHERE clause
-        for (var entry : where.entrySet()) {
-            String columnName = entry.getKey();
-            Object value = entry.getValue();
-            
-            // Only simple equality can use index
-            if (!(value instanceof Map) && indexService.isIndexed(tableName, columnName)) {
-                // Use index lookup!
-                Set<Long> rowIds = indexService.lookup(tableName, columnName, value);
-                log.debug("Using index on {}.{} - found {} candidates", 
-                        tableName, columnName, rowIds.size());
-                
-                // Fetch rows by ID and apply remaining filters
-                List<Row> allRows = storage.readAllRows(tableName);
-                return allRows.stream()
-                        .filter(row -> rowIds.contains(row.getRowId()))
-                        .filter(row -> matchesWhere(row, where))
-                        .collect(Collectors.toList());
-            }
-        }
-        
-        // No usable index - full table scan
-        log.debug("Full table scan on {}", tableName);
-        List<Row> allRows = storage.readAllRows(tableName);
-        return allRows.stream()
-                .filter(row -> matchesWhere(row, where))
-                .collect(Collectors.toList());
-    }
-    
-    /**
-     * Checks if a row matches the WHERE clause.
-     */
     @SuppressWarnings("unchecked")
     private boolean matchesWhere(Row row, Map<String, Object> where) {
+        if (where == null || where.isEmpty()) return true;
+        
         for (var entry : where.entrySet()) {
             String key = entry.getKey();
             Object condition = entry.getValue();
@@ -462,9 +628,6 @@ public class FileBasedRdbmsService {
         return true;
     }
     
-    /**
-     * Checks if a map matches the WHERE clause.
-     */
     @SuppressWarnings("unchecked")
     private boolean matchesWhereMap(Map<String, Object> row, Map<String, Object> where) {
         for (var entry : where.entrySet()) {
@@ -489,9 +652,6 @@ public class FileBasedRdbmsService {
         return true;
     }
     
-    /**
-     * Evaluates a comparison condition.
-     */
     private boolean evaluateCondition(Object actualValue, String operator, Object expectedValue) {
         if (operator == null || operator.equals("=")) {
             return Objects.equals(actualValue, expectedValue);
@@ -520,7 +680,6 @@ public class FileBasedRdbmsService {
         }
     }
     
-    @SuppressWarnings("unchecked")
     private int compareValues(Object actual, Object expected) {
         if (actual == null && expected == null) return 0;
         if (actual == null) return -1;
@@ -562,7 +721,6 @@ public class FileBasedRdbmsService {
         Map<String, Object> joined = new LinkedHashMap<>();
         
         if (request.getColumns() == null || request.getColumns().isEmpty()) {
-            // SELECT *
             if (leftRow != null) {
                 for (var entry : leftRow.getValues().entrySet()) {
                     joined.put(request.getLeftTable() + "." + entry.getKey(), entry.getValue());
@@ -574,7 +732,6 @@ public class FileBasedRdbmsService {
                 }
             }
         } else {
-            // Project specific columns
             for (String col : request.getColumns()) {
                 if (col.contains(".")) {
                     String[] parts = col.split("\\.");
@@ -592,15 +749,4 @@ public class FileBasedRdbmsService {
         
         return joined;
     }
-    
-    private void rebuildTableIndexes(String tableName) {
-        try {
-            TableSchema schema = storage.getSchema(tableName);
-            List<Row> rows = storage.readAllRows(tableName);
-            indexService.rebuildIndexes(tableName, schema, rows);
-        } catch (IOException e) {
-            log.error("Failed to rebuild indexes for table: {}", tableName, e);
-        }
-    }
-    
 }

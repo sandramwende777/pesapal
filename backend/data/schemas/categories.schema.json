@@ -40,8 +40,8 @@
     "referencesColumn" : null
   } ],
   "indexes" : [ ],
-  "createdAt" : "2026-01-17T21:05:23.328246",
-  "updatedAt" : "2026-01-17T21:05:23.348687",
+  "createdAt" : "2026-01-17T21:27:48.24786",
+  "updatedAt" : "2026-01-17T21:27:48.268908",
   "rowCount" : 3,
   "nextRowId" : 7,
   "primaryKeyColumns" : [ "id" ],

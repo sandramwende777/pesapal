@@ -1,6 +1,6 @@
 # File-Based RDBMS - Interview Challenge
 
-This project implements a **TRUE Relational Database Management System** from scratch, with custom file-based storage. Unlike implementations that wrap existing databases (like H2 or SQLite), this RDBMS manages its own storage layer with page-based data files and in-memory indexes.
+This project implements a **TRUE Relational Database Management System** from scratch, with custom file-based storage. This RDBMS manages its own storage layer with page-based data files and in-memory indexes.
 
 ## Key Features (Meeting Interview Requirements)
 
@@ -8,26 +8,32 @@ This project implements a **TRUE Relational Database Management System** from sc
 |-------------|----------------|
 | **Table declarations with data types** | CREATE TABLE with VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN, DATE, TIMESTAMP, TEXT |
 | **CRUD operations** | INSERT, SELECT, UPDATE, DELETE with full WHERE clause support |
-| **Basic indexing** | In-memory hash indexes that **actually optimize queries** |
-| **Primary keys** | Enforced uniqueness with O(1) index lookup |
-| **Unique keys** | Enforced uniqueness with O(1) index lookup |
+| **Basic indexing** | **B-Tree indexes** with equality AND range query support (O(log n)) |
+| **Primary keys** | Enforced uniqueness with O(log n) index lookup |
+| **Unique keys** | Enforced uniqueness with O(log n) index lookup |
 | **Joining** | INNER, LEFT, RIGHT JOIN with hash join algorithm |
 | **SQL interface** | Full SQL parser for all operations |
 | **Interactive REPL** | Command-line interface like mysql/psql |
 | **Demo web app** | React frontend with CRUD operations |
+| **Query EXPLAIN** | Shows whether index was used and execution time |
 
 ## Architecture: True File-Based Storage
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         FILE-BASED RDBMS                                │
+│                         FILE-BASED RDBMS v2.1                           │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │   SQL Query ──► SQL Parser ──► RDBMS Service ──► File Storage Service   │
 │                                      │                   │              │
 │                                      ▼                   ▼              │
-│                              In-Memory Index        File System         │
-│                              (Hash-based)           (Our format)        │
+│                              Index Manager          File System         │
+│                              (B-Tree based)         (Our format)        │
+│                                      │                                  │
+│                                      ▼                                  │
+│                              BTreeIndex (per column)                    │
+│                              - O(log n) lookups                         │
+│                              - Range query support                      │
 │                                                                         │
 │   No JPA. No H2. No SQLite. All storage is managed by our code.        │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -70,9 +76,12 @@ Each `.dat` file uses a page-based format similar to PostgreSQL:
 └────────────────────────────────────────────────────────────┘
 ```
 
-### In-Memory Indexes That Actually Work
+### B-Tree Indexes That Actually Work
 
-Unlike metadata-only indexes, our indexes **actually optimize queries**:
+Our indexes use a B-Tree structure (via Java's TreeMap) providing:
+- **O(log n)** equality lookups
+- **O(log n + k)** range queries (>, <, >=, <=)
+- Automatic index selection for queries
 
 ```java
 // Query: SELECT * FROM products WHERE category_id = 1
@@ -81,10 +90,46 @@ Unlike metadata-only indexes, our indexes **actually optimize queries**:
 List<Row> allRows = storage.readAllRows("products");  // Read ALL rows
 filter(row -> row.get("category_id") == 1);           // Check each one
 
-// WITH index: O(1) - direct lookup
-Set<Long> rowIds = index.lookup("products", "category_id", 1);  // Instant!
-fetchRowsById(rowIds);  // Only fetch matching rows
+// WITH index: O(log n) - B-Tree lookup
+Set<Long> rowIds = index.find(1);  // Fast B-Tree lookup!
+fetchRowsById(rowIds);             // Only fetch matching rows
+
+// RANGE query: SELECT * FROM products WHERE price > 500
+Set<Long> rowIds = index.findGreaterThan(500, false);  // O(log n + k)
 ```
+
+### Query EXPLAIN
+
+See exactly how your query executes:
+
+```bash
+# Run a query
+curl -X POST http://localhost:8080/api/rdbms/sql \
+  -d '{"sql":"SELECT * FROM products WHERE category_id = 1"}'
+
+# Then check the execution plan
+curl http://localhost:8080/api/rdbms/explain
+```
+
+Response:
+```json
+{
+  "indexUsed": true,
+  "indexName": "idx_product_category",
+  "indexColumn": "category_id",
+  "indexOperation": "EQUALITY_LOOKUP",
+  "rowsScanned": 4,
+  "rowsReturned": 2,
+  "executionTimeMs": 1
+}
+```
+
+Index operations:
+- `EQUALITY_LOOKUP`: Used for `=` conditions
+- `RANGE_SCAN_GT`: Used for `>` conditions
+- `RANGE_SCAN_GTE`: Used for `>=` conditions
+- `RANGE_SCAN_LT`: Used for `<` conditions
+- `RANGE_SCAN_LTE`: Used for `<=` conditions
 
 ## Getting Started
 

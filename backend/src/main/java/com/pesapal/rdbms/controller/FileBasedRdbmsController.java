@@ -93,21 +93,49 @@ public class FileBasedRdbmsController {
         }
     }
     
+    // ==================== Index & Debug Endpoints ====================
+    
+    @GetMapping("/indexes")
+    public ResponseEntity<Map<String, Object>> getIndexStats() {
+        return ResponseEntity.ok(rdbmsService.getIndexStats());
+    }
+    
+    @GetMapping("/explain")
+    public ResponseEntity<Map<String, Object>> explainLastQuery() {
+        var execution = rdbmsService.getLastQueryExecution();
+        if (execution == null) {
+            return ResponseEntity.ok(Map.of("message", "No query executed yet"));
+        }
+        return ResponseEntity.ok(Map.of(
+                "table", execution.getTableName(),
+                "queryType", execution.getQueryType(),
+                "indexUsed", execution.isIndexUsed(),
+                "indexName", execution.getIndexName() != null ? execution.getIndexName() : "N/A",
+                "indexColumn", execution.getIndexColumn() != null ? execution.getIndexColumn() : "N/A",
+                "indexOperation", execution.getIndexOperation() != null ? execution.getIndexOperation() : "N/A",
+                "rowsScanned", execution.getRowsScanned(),
+                "rowsReturned", execution.getRowsReturned(),
+                "executionTimeMs", execution.getExecutionTimeMs(),
+                "executionPlan", execution.getExecutionPlan()
+        ));
+    }
+    
     // ==================== Info Endpoint ====================
     
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> getInfo() {
         return ResponseEntity.ok(Map.of(
                 "name", "File-Based RDBMS",
-                "version", "2.0",
+                "version", "2.1",
                 "storage", "Custom page-based file storage",
-                "indexing", "In-memory hash indexes",
+                "indexing", "B-Tree indexes with range query support",
                 "features", List.of(
                         "CREATE TABLE with PRIMARY KEY, UNIQUE",
                         "INSERT, SELECT, UPDATE, DELETE",
                         "WHERE with =, !=, <, >, <=, >=, LIKE, IS NULL",
                         "JOIN (INNER, LEFT, RIGHT)",
-                        "Indexes for fast lookups",
+                        "B-Tree indexes for fast lookups AND range queries",
+                        "Query execution logging with EXPLAIN",
                         "SQL REPL interface"
                 )
         ));
