@@ -1,281 +1,317 @@
-# Simple RDBMS - Interview Challenge
+# File-Based RDBMS - Interview Challenge
 
-This project implements a simple Relational Database Management System (RDBMS) with a Spring Boot backend and React frontend. The system supports table creation, CRUD operations, indexing, primary/unique keys, and JOIN operations.
+This project implements a **TRUE Relational Database Management System** from scratch, with custom file-based storage. Unlike implementations that wrap existing databases (like H2 or SQLite), this RDBMS manages its own storage layer with page-based data files and in-memory indexes.
 
-## Project Structure
+## Key Features (Meeting Interview Requirements)
+
+| Requirement | Implementation |
+|-------------|----------------|
+| **Table declarations with data types** | CREATE TABLE with VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN, DATE, TIMESTAMP, TEXT |
+| **CRUD operations** | INSERT, SELECT, UPDATE, DELETE with full WHERE clause support |
+| **Basic indexing** | In-memory hash indexes that **actually optimize queries** |
+| **Primary keys** | Enforced uniqueness with O(1) index lookup |
+| **Unique keys** | Enforced uniqueness with O(1) index lookup |
+| **Joining** | INNER, LEFT, RIGHT JOIN with hash join algorithm |
+| **SQL interface** | Full SQL parser for all operations |
+| **Interactive REPL** | Command-line interface like mysql/psql |
+| **Demo web app** | React frontend with CRUD operations |
+
+## Architecture: True File-Based Storage
 
 ```
-pesapal/
-├── backend/          # Spring Boot application (Gradle)
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/com/pesapal/rdbms/
-│   │   │   │   ├── entity/      # JPA entities for RDBMS metadata
-│   │   │   │   ├── repository/  # JPA repositories
-│   │   │   │   ├── service/     # Business logic and SQL parser
-│   │   │   │   ├── controller/  # REST API endpoints
-│   │   │   │   ├── dto/         # Data Transfer Objects
-│   │   │   │   └── config/      # Configuration and initialization
-│   │   │   └── resources/
-│   │   │       └── application.properties
-│   │   └── test/
-│   ├── build.gradle
-│   └── settings.gradle
-└── frontend/         # React application
-    ├── src/
-    │   ├── App.js
-    │   ├── App.css
-    │   ├── index.js
-    │   └── index.css
-    ├── public/
-    └── package.json
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FILE-BASED RDBMS                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   SQL Query ──► SQL Parser ──► RDBMS Service ──► File Storage Service   │
+│                                      │                   │              │
+│                                      ▼                   ▼              │
+│                              In-Memory Index        File System         │
+│                              (Hash-based)           (Our format)        │
+│                                                                         │
+│   No JPA. No H2. No SQLite. All storage is managed by our code.        │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Features
+### File Structure
 
-### Backend (Spring Boot)
-- **Entities**: JPA entities for tables, columns, indexes, keys, and rows
-- **Repositories**: Data access layer using Spring Data JPA
-- **Services**: 
-  - `RdbmsService`: Core RDBMS operations (CREATE TABLE, INSERT, SELECT, UPDATE, DELETE, JOIN)
-  - `SqlParserService`: SQL parser for REPL mode
-- **REST API**: RESTful endpoints for all operations
-- **SQL REPL**: Interactive SQL interface via `/api/rdbms/sql` endpoint
+```
+data/
+├── schemas/                          # Table metadata (JSON)
+│   ├── products.schema.json          # Column definitions, keys, indexes
+│   ├── categories.schema.json
+│   └── orders.schema.json
+└── tables/                           # Row data (Binary page format)
+    ├── products.dat                  # 4KB pages with slotted storage
+    ├── categories.dat
+    └── orders.dat
+```
 
-### Frontend (React)
-- **SQL REPL Interface**: Interactive SQL query interface
-- **Table Browser**: View tables and their data
-- **CRUD Operations**: Create, read, update, and delete data through the UI
+### Page-Based Storage Format
 
-### Supported Operations
-- ✅ CREATE TABLE with column definitions
-- ✅ DROP TABLE to remove tables
-- ✅ Data types: VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN, DATE, TIMESTAMP, TEXT
-- ✅ PRIMARY KEY constraints
-- ✅ UNIQUE constraints
-- ✅ Indexes (with unique option)
-- ✅ INSERT with data validation
-- ✅ SELECT with WHERE, LIMIT, OFFSET
-- ✅ UPDATE with WHERE clause
-- ✅ DELETE with WHERE clause
-- ✅ JOIN operations (INNER, LEFT, RIGHT)
-- ✅ WHERE clause operators: =, !=, <>, >, <, >=, <=, LIKE, IS NULL, IS NOT NULL
-- ✅ **Interactive REPL mode** (command-line SQL interface)
+Each `.dat` file uses a page-based format similar to PostgreSQL:
 
-## Prerequisites
+```
+┌────────────────────────────────────────────────────────────┐
+│ Page (4KB)                                                  │
+├────────────────────────────────────────────────────────────┤
+│ Header (32 bytes)                                          │
+│   - Page ID, Row count, Free space pointers                │
+├────────────────────────────────────────────────────────────┤
+│ Row Directory (grows down)                                  │
+│   - Slot 0: offset=3800, length=150                        │
+│   - Slot 1: offset=3650, length=120                        │
+│   - ...                                                     │
+├────────────────────────────────────────────────────────────┤
+│ Free Space                                                  │
+├────────────────────────────────────────────────────────────┤
+│ Row Data (grows up from bottom)                            │
+│   - Binary serialized row data                             │
+└────────────────────────────────────────────────────────────┘
+```
 
-- Java 17 or higher
-- Node.js 16+ and npm
-- Gradle 8.5+ (or use the Gradle wrapper)
+### In-Memory Indexes That Actually Work
+
+Unlike metadata-only indexes, our indexes **actually optimize queries**:
+
+```java
+// Query: SELECT * FROM products WHERE category_id = 1
+
+// WITHOUT index: O(n) - scan all rows
+List<Row> allRows = storage.readAllRows("products");  // Read ALL rows
+filter(row -> row.get("category_id") == 1);           // Check each one
+
+// WITH index: O(1) - direct lookup
+Set<Long> rowIds = index.lookup("products", "category_id", 1);  // Instant!
+fetchRowsById(rowIds);  // Only fetch matching rows
+```
 
 ## Getting Started
 
-### Backend Setup
+### Prerequisites
 
-1. Navigate to the backend directory:
+- Java 17+
+- Node.js 16+ (for frontend)
+- Gradle 8.5+
+
+### Running the Backend
+
 ```bash
 cd backend
-```
-
-2. Build the project:
-```bash
-./gradlew build
-```
-
-3. Run the application:
-```bash
 ./gradlew bootRun
 ```
 
-The backend will start on `http://localhost:8080`
+The server starts at `http://localhost:8080`
 
-### Running in REPL Mode (Interactive Command-Line)
-
-To use the interactive SQL REPL (Read-Eval-Print-Loop):
+### Running in REPL Mode (Interactive SQL)
 
 ```bash
 cd backend
-./gradlew bootRun --args='--repl.enabled=true'
-```
-
-Or if using a JAR file:
-```bash
-java -jar build/libs/rdbms-0.0.1-SNAPSHOT.jar --repl.enabled=true
+./gradlew bootRun --args='--repl.enabled=true' --console=plain
 ```
 
 This starts an interactive command-line interface:
+
 ```
-╔═══════════════════════════════════════════════════════════════╗
-║           Simple RDBMS - Interactive SQL Interface            ║
-║                        Version 1.0                            ║
-╚═══════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════╗
+║        File-Based RDBMS - Interactive SQL Interface               ║
+║                        Version 2.0                                ║
+║                                                                   ║
+║  This RDBMS uses CUSTOM FILE STORAGE (not JPA/H2):                ║
+║  - Schemas: data/schemas/*.schema.json                            ║
+║  - Data:    data/tables/*.dat (page-based binary format)          ║
+║  - Indexes: In-memory hash indexes for fast lookups               ║
+╚═══════════════════════════════════════════════════════════════════╝
 
 rdbms> SHOW TABLES;
-+------------+---------+------+
-| Table Name | Columns | Rows |
-+------------+---------+------+
-| products   |       6 |    4 |
-| categories |       3 |    3 |
-+------------+---------+------+
-2 table(s) in database
-Time: 5 ms
++-------------+---------+------+
+| Table Name  | Columns | Rows |
++-------------+---------+------+
+| products    |       6 |    4 |
+| categories  |       3 |    3 |
++-------------+---------+------+
 
-rdbms> SELECT * FROM products WHERE price > 100;
-...
+rdbms> SELECT * FROM products WHERE category_id = 1;
++----+------------+---------------------+--------+-------+-------------+
+| id | name       | description         | price  | stock | category_id |
++----+------------+---------------------+--------+-------+-------------+
+| 1  | Laptop     | High-performance... | 999.99 | 50    | 1           |
+| 2  | Smartphone | Latest smartphone   | 699.99 | 100   | 1           |
++----+------------+---------------------+--------+-------+-------------+
+2 row(s) returned
+Time: 3 ms
+
+rdbms> quit
+Goodbye!
 ```
 
-Type `help` for examples, `quit` to exit.
+### Running the Frontend
 
-### Frontend Setup
-
-1. Navigate to the frontend directory:
 ```bash
 cd frontend
-```
-
-2. Install dependencies:
-```bash
 npm install
-```
-
-3. Start the development server:
-```bash
 npm start
 ```
 
-The frontend will start on `http://localhost:3000`
+The frontend starts at `http://localhost:3000`
 
 ## API Endpoints
 
 ### REST API
 
-- `POST /api/rdbms/tables` - Create a new table
-- `GET /api/rdbms/tables` - List all tables
-- `GET /api/rdbms/tables/{tableName}` - Get table metadata
-- `DELETE /api/rdbms/tables/{tableName}` - Drop a table
-- `POST /api/rdbms/insert` - Insert a row
-- `POST /api/rdbms/select` - Select rows
-- `PUT /api/rdbms/update` - Update rows
-- `DELETE /api/rdbms/delete` - Delete rows
-- `POST /api/rdbms/join` - Perform a JOIN operation
-- `POST /api/rdbms/sql` - Execute SQL query (REPL mode)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/rdbms/info` | Get RDBMS information |
+| POST | `/api/rdbms/tables` | Create a new table |
+| GET | `/api/rdbms/tables` | List all tables |
+| GET | `/api/rdbms/tables/{name}` | Get table schema |
+| DELETE | `/api/rdbms/tables/{name}` | Drop a table |
+| POST | `/api/rdbms/insert` | Insert a row |
+| POST | `/api/rdbms/select` | Select rows |
+| PUT | `/api/rdbms/update` | Update rows |
+| DELETE | `/api/rdbms/delete` | Delete rows |
+| POST | `/api/rdbms/join` | Perform a JOIN |
+| POST | `/api/rdbms/sql` | Execute SQL query |
 
 ### SQL Examples
 
 ```sql
 -- Create a table
-CREATE TABLE products (
+CREATE TABLE employees (
     id INTEGER,
     name VARCHAR(100),
-    price DECIMAL(10,2),
-    stock INTEGER,
-    PRIMARY KEY (id)
+    email VARCHAR(200),
+    salary DECIMAL,
+    active BOOLEAN,
+    PRIMARY KEY (id),
+    UNIQUE (email)
 );
 
 -- Insert data
-INSERT INTO products (id, name, price, stock) VALUES (1, 'Laptop', 999.99, 50);
+INSERT INTO employees (id, name, email, salary, active)
+VALUES (1, 'John Doe', 'john@example.com', 75000.00, true);
 
--- Select data
-SELECT * FROM products;
-SELECT name, price FROM products LIMIT 10;
-
--- WHERE clause with comparison operators
-SELECT * FROM products WHERE price > 500;
-SELECT * FROM products WHERE price >= 100 AND price <= 1000;
-SELECT * FROM products WHERE stock != 0;
+-- Select with WHERE (uses index if available)
+SELECT * FROM employees WHERE id = 1;
+SELECT name, salary FROM employees WHERE salary > 50000;
 SELECT * FROM products WHERE name LIKE '%Laptop%';
-SELECT * FROM products WHERE description IS NOT NULL;
 
--- Update data
-UPDATE products SET price = 899.99 WHERE id = 1;
+-- Update
+UPDATE employees SET salary = 80000.00 WHERE id = 1;
 
--- Delete data
-DELETE FROM products WHERE id = 1;
+-- Delete
+DELETE FROM employees WHERE active = false;
 
--- Drop a table
-DROP TABLE products;
-
--- Join tables
-SELECT * FROM products INNER JOIN categories ON products.category_id = categories.id;
-SELECT * FROM orders LEFT JOIN order_items ON orders.id = order_items.order_id;
+-- Join (uses hash join algorithm)
+SELECT * FROM products 
+INNER JOIN categories ON products.category_id = categories.id;
 
 -- Show tables
 SHOW TABLES;
 
 -- Describe table
-DESCRIBE products;
+DESCRIBE employees;
+
+-- Drop table
+DROP TABLE employees;
 ```
 
-## Sample E-Commerce Data
+## Technical Details
 
-The application automatically initializes sample e-commerce tables **using our RDBMS** on startup:
-- **products**: Product catalog with id, name, description, price, stock, category_id
-- **categories**: Product categories with id, name, description
-- **orders**: Customer orders with id, customer_id, order_date, total_amount, status
-- **order_items**: Order line items with id, order_id, product_id, quantity, price
+### What Makes This a "Real" RDBMS
 
-**Important**: These tables are created **via our RDBMS** (using CREATE TABLE in DataInitializer), not as traditional JPA entities. This demonstrates the RDBMS in action with a real-world e-commerce use case.
+1. **Custom Storage Layer**: No JPA, no H2, no SQLite. We serialize data to our own binary format.
 
-## Architecture Notes
+2. **Page-Based Architecture**: Like PostgreSQL, data is stored in fixed-size 4KB pages with a slotted page format.
 
-### Data Storage
-- The RDBMS metadata (tables, columns, indexes, keys) is stored in JPA entities
-- Row data is stored as JSON strings in the `TableRow` entity
-- The actual database (H2 in-memory) stores the RDBMS metadata
+3. **Working Indexes**: In-memory hash indexes provide O(1) lookups for equality conditions.
 
-### Constraints
-- Primary key validation ensures uniqueness
-- Unique key validation prevents duplicates
-- Nullable constraints are enforced
-- Foreign key relationships are supported through JOIN operations
+4. **Constraint Enforcement**: Primary keys and unique keys are validated using index lookups.
+
+5. **SQL Parser**: Full SQL parsing using regex-based tokenization.
+
+6. **Query Optimization**: The query engine checks for available indexes before deciding on a scan strategy.
+
+### Supported Data Types
+
+| Type | Description | Storage |
+|------|-------------|---------|
+| INTEGER | 32-bit integer | 4 bytes |
+| BIGINT | 64-bit integer | 8 bytes |
+| DECIMAL | Floating point | 8 bytes (as double) |
+| BOOLEAN | true/false | 1 byte |
+| DATE | Date only | 8 bytes (epoch days) |
+| TIMESTAMP | Date and time | 8 bytes (epoch millis) |
+| VARCHAR(n) | Variable string | Variable (length-prefixed) |
+| TEXT | Large text | Variable (length-prefixed) |
+
+### Supported WHERE Operators
+
+- `=` - Equality (uses index if available)
+- `!=`, `<>` - Not equal
+- `>`, `<`, `>=`, `<=` - Comparison
+- `LIKE` - Pattern matching (% and _)
+- `IS NULL`, `IS NOT NULL` - Null checks
+- `AND` - Combine conditions
 
 ### Limitations
-- JOIN operations are limited to equality joins
-- No support for complex SQL features (subqueries, aggregations like COUNT/SUM, etc.)
-- OR conditions in WHERE clauses are not supported (only AND)
-- Indexes are stored as metadata but don't optimize query performance
-- Data types are validated but not strictly enforced at the storage level
+
+- OR conditions not supported (only AND)
+- No aggregate functions (COUNT, SUM, AVG)
+- No ORDER BY clause
+- No subqueries
+- Indexes are rebuilt in memory on startup
+- No transaction support (ACID)
+
+## Project Structure
+
+```
+pesapal/
+├── backend/
+│   └── src/main/java/com/pesapal/rdbms/
+│       ├── storage/               # *** THE CORE STORAGE ENGINE ***
+│       │   ├── FileStorageService.java   # File I/O, page management
+│       │   ├── Page.java                 # 4KB page with slotted format
+│       │   ├── InMemoryIndex.java        # Hash-based indexes
+│       │   ├── TableSchema.java          # Table metadata
+│       │   ├── ColumnSchema.java         # Column definitions
+│       │   ├── Row.java                  # Row data container
+│       │   └── DataType.java             # Supported types
+│       ├── service/
+│       │   ├── FileBasedRdbmsService.java    # CRUD operations
+│       │   └── FileBasedSqlParserService.java # SQL parsing
+│       ├── controller/
+│       │   └── FileBasedRdbmsController.java # REST API
+│       ├── repl/
+│       │   └── FileBasedReplRunner.java      # Interactive CLI
+│       └── config/
+│           └── FileBasedDataInitializer.java # Sample data
+├── frontend/                      # React web application
+└── data/                          # *** CREATED AT RUNTIME ***
+    ├── schemas/                   # JSON schema files
+    └── tables/                    # Binary data files
+```
+
+## Why This Design?
+
+The interview challenge asked to "build an RDBMS", not just use one. This implementation:
+
+1. **Demonstrates understanding** of how databases actually work internally
+2. **Uses custom storage** instead of delegating to an existing database
+3. **Implements working indexes** that actually speed up queries
+4. **Shows page-based architecture** similar to real databases
 
 ## Testing
 
-### Backend Tests
 ```bash
 cd backend
 ./gradlew test
 ```
 
-The test suite includes:
-- CREATE TABLE tests (with PRIMARY KEY, UNIQUE constraints)
-- INSERT tests (including constraint violation tests)
-- SELECT tests (basic, WHERE, LIMIT, column projection)
-- UPDATE and DELETE tests
-- DROP TABLE tests
-- JOIN tests (INNER, LEFT)
-- SQL Parser tests (all SQL commands)
-
-### Manual Testing
-1. Use the React UI to execute SQL queries
-2. Use the REST API endpoints directly (Postman, curl, etc.)
-3. Access H2 console at `http://localhost:8080/h2-console` (JDBC URL: `jdbc:h2:mem:rdbmsdb`)
-
-## Technologies Used
-
-### Backend
-- Spring Boot 3.2.0
-- Spring Data JPA
-- H2 Database (in-memory)
-- Lombok
-- Gradle
-
-### Frontend
-- React 18.2.0
-- Axios
-- CSS3
-
 ## Credits
 
-This project was built as an interview challenge. All code was written specifically for this challenge, with standard Spring Boot and React patterns and best practices applied.
+This project was built as an interview challenge to demonstrate building a database from scratch. The implementation is original, applying concepts from database internals literature.
 
 ## License
 
-This project is for interview/assessment purposes only.
+For interview/assessment purposes only.

@@ -1,0 +1,49 @@
+{
+  "tableName" : "categories",
+  "columns" : [ {
+    "name" : "id",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 0
+  }, {
+    "name" : "name",
+    "dataType" : "VARCHAR",
+    "maxLength" : 100,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 1
+  }, {
+    "name" : "description",
+    "dataType" : "TEXT",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : true,
+    "defaultValue" : null,
+    "ordinalPosition" : 2
+  } ],
+  "keys" : [ {
+    "columnName" : "id",
+    "keyType" : "PRIMARY",
+    "referencesTable" : null,
+    "referencesColumn" : null
+  }, {
+    "columnName" : "name",
+    "keyType" : "UNIQUE",
+    "referencesTable" : null,
+    "referencesColumn" : null
+  } ],
+  "indexes" : [ ],
+  "createdAt" : "2026-01-17T21:05:23.328246",
+  "updatedAt" : "2026-01-17T21:05:23.348687",
+  "rowCount" : 3,
+  "nextRowId" : 7,
+  "primaryKeyColumns" : [ "id" ],
+  "uniqueKeyColumns" : [ "name" ]
+}

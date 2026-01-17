@@ -106,7 +106,7 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Simple RDBMS Demo - E-Commerce</h1>
+        <h1>Simple RDBMS Demo</h1>
         <p>Create tables, insert data, and query using SQL or REST API</p>
       </header>
 
@@ -124,7 +124,7 @@ function App() {
                 onClick={() => handleTableClick(table)}
               >
                 <strong>{table.tableName}</strong>
-                <span className="table-count">{table.rows?.length || 0} rows</span>
+                <span className="table-count">{table.rowCount ?? table.rows?.length ?? 0} rows</span>
               </div>
             ))}
           </div>

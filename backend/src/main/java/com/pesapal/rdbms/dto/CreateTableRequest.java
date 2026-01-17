@@ -1,6 +1,6 @@
 package com.pesapal.rdbms.dto;
 
-import com.pesapal.rdbms.entity.TableColumn;
+import com.pesapal.rdbms.storage.DataType;
 import lombok.Data;
 
 import java.util.List;
@@ -16,7 +16,7 @@ public class CreateTableRequest {
     @Data
     public static class ColumnDefinition {
         private String name;
-        private TableColumn.DataType dataType;
+        private DataType dataType;
         private Integer maxLength;
         private Boolean nullable = true;
         private Object defaultValue;

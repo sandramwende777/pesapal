@@ -1,7 +1,8 @@
 package com.pesapal.rdbms.service;
 
 import com.pesapal.rdbms.dto.*;
-import com.pesapal.rdbms.entity.TableColumn;
+import com.pesapal.rdbms.storage.DataType;
+import com.pesapal.rdbms.storage.TableSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -11,13 +12,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+/**
+ * SQL Parser for the file-based RDBMS.
+ * Parses SQL statements and delegates to FileBasedRdbmsService.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class SqlParserService {
-
-    private final RdbmsService rdbmsService;
-
+public class FileBasedSqlParserService {
+    
+    private final FileBasedRdbmsService rdbmsService;
+    
     public Object executeSql(String sql) {
         sql = sql.trim().replaceAll("\\s+", " ");
         
@@ -28,13 +33,15 @@ public class SqlParserService {
         } else if (sql.toUpperCase().startsWith("INSERT INTO")) {
             return parseInsert(sql);
         } else if (sql.toUpperCase().startsWith("SELECT")) {
+            // Check if it's a JOIN
+            if (sql.toUpperCase().contains(" JOIN ")) {
+                return parseJoin(sql);
+            }
             return parseSelect(sql);
         } else if (sql.toUpperCase().startsWith("UPDATE")) {
             return parseUpdate(sql);
         } else if (sql.toUpperCase().startsWith("DELETE FROM")) {
             return parseDelete(sql);
-        } else if (sql.toUpperCase().contains("JOIN")) {
-            return parseJoin(sql);
         } else if (sql.toUpperCase().startsWith("SHOW TABLES")) {
             return rdbmsService.listTables();
         } else if (sql.toUpperCase().startsWith("DESCRIBE") || sql.toUpperCase().startsWith("DESC")) {
@@ -43,7 +50,7 @@ public class SqlParserService {
             throw new IllegalArgumentException("Unsupported SQL statement: " + sql);
         }
     }
-
+    
     private Object parseDropTable(String sql) {
         Pattern pattern = Pattern.compile(
                 "DROP TABLE(?:\\s+IF\\s+EXISTS)?\\s+(\\w+)",
@@ -54,12 +61,12 @@ public class SqlParserService {
         if (!matcher.find()) {
             throw new IllegalArgumentException("Invalid DROP TABLE syntax");
         }
-
+        
         String tableName = matcher.group(1);
         rdbmsService.dropTable(tableName);
         return "Table '" + tableName + "' dropped successfully";
     }
-
+    
     private Object parseCreateTable(String sql) {
         Pattern pattern = Pattern.compile(
                 "CREATE TABLE\\s+(\\w+)\\s*\\(([^)]+)\\)",
@@ -70,17 +77,17 @@ public class SqlParserService {
         if (!matcher.find()) {
             throw new IllegalArgumentException("Invalid CREATE TABLE syntax");
         }
-
+        
         String tableName = matcher.group(1);
         String columnsDef = matcher.group(2);
-
+        
         CreateTableRequest request = new CreateTableRequest();
         request.setTableName(tableName);
         request.setColumns(new ArrayList<>());
         request.setPrimaryKeys(new ArrayList<>());
         request.setUniqueKeys(new ArrayList<>());
         request.setIndexes(new ArrayList<>());
-
+        
         String[] columnDefs = columnsDef.split(",");
         for (String colDef : columnDefs) {
             colDef = colDef.trim();
@@ -103,50 +110,62 @@ public class SqlParserService {
                         request.getUniqueKeys().add(ukCol.trim());
                     }
                 }
+            } else if (colDef.toUpperCase().startsWith("INDEX") || colDef.toUpperCase().startsWith("KEY")) {
+                Pattern idxPattern = Pattern.compile("(?:INDEX|KEY)\\s+(\\w+)\\s*\\(([^)]+)\\)", Pattern.CASE_INSENSITIVE);
+                Matcher idxMatcher = idxPattern.matcher(colDef);
+                if (idxMatcher.find()) {
+                    CreateTableRequest.IndexDefinition idx = new CreateTableRequest.IndexDefinition();
+                    idx.setIndexName(idxMatcher.group(1));
+                    idx.setColumnName(idxMatcher.group(2).trim());
+                    idx.setUnique(false);
+                    request.getIndexes().add(idx);
+                }
             } else {
                 CreateTableRequest.ColumnDefinition column = parseColumnDefinition(colDef);
                 request.getColumns().add(column);
             }
         }
-
+        
         return rdbmsService.createTable(request);
     }
-
+    
     private CreateTableRequest.ColumnDefinition parseColumnDefinition(String colDef) {
         String[] parts = colDef.trim().split("\\s+");
         if (parts.length < 2) {
             throw new IllegalArgumentException("Invalid column definition: " + colDef);
         }
-
+        
         CreateTableRequest.ColumnDefinition column = new CreateTableRequest.ColumnDefinition();
         column.setName(parts[0].trim());
-
+        
         String dataTypeStr = parts[1].toUpperCase();
         if (dataTypeStr.contains("VARCHAR") || dataTypeStr.contains("CHAR")) {
-            column.setDataType(TableColumn.DataType.VARCHAR);
+            column.setDataType(DataType.VARCHAR);
             Pattern lengthPattern = Pattern.compile("\\((\\d+)\\)");
             Matcher lengthMatcher = lengthPattern.matcher(dataTypeStr);
             if (lengthMatcher.find()) {
                 column.setMaxLength(Integer.parseInt(lengthMatcher.group(1)));
             }
-        } else if (dataTypeStr.contains("INT") || dataTypeStr.equals("INTEGER")) {
-            column.setDataType(TableColumn.DataType.INTEGER);
+        } else if (dataTypeStr.equals("INT") || dataTypeStr.equals("INTEGER")) {
+            column.setDataType(DataType.INTEGER);
         } else if (dataTypeStr.contains("BIGINT")) {
-            column.setDataType(TableColumn.DataType.BIGINT);
-        } else if (dataTypeStr.contains("DECIMAL") || dataTypeStr.contains("NUMERIC")) {
-            column.setDataType(TableColumn.DataType.DECIMAL);
+            column.setDataType(DataType.BIGINT);
+        } else if (dataTypeStr.contains("DECIMAL") || dataTypeStr.contains("NUMERIC") || dataTypeStr.contains("DOUBLE") || dataTypeStr.contains("FLOAT")) {
+            column.setDataType(DataType.DECIMAL);
         } else if (dataTypeStr.contains("BOOLEAN") || dataTypeStr.contains("BOOL")) {
-            column.setDataType(TableColumn.DataType.BOOLEAN);
-        } else if (dataTypeStr.contains("DATE")) {
-            column.setDataType(TableColumn.DataType.DATE);
-        } else if (dataTypeStr.contains("TIMESTAMP")) {
-            column.setDataType(TableColumn.DataType.TIMESTAMP);
-        } else if (dataTypeStr.contains("TEXT")) {
-            column.setDataType(TableColumn.DataType.TEXT);
+            column.setDataType(DataType.BOOLEAN);
+        } else if (dataTypeStr.contains("DATE") && !dataTypeStr.contains("TIME")) {
+            column.setDataType(DataType.DATE);
+        } else if (dataTypeStr.contains("TIMESTAMP") || dataTypeStr.contains("DATETIME")) {
+            column.setDataType(DataType.TIMESTAMP);
+        } else if (dataTypeStr.contains("TEXT") || dataTypeStr.contains("CLOB")) {
+            column.setDataType(DataType.TEXT);
         } else {
-            throw new IllegalArgumentException("Unsupported data type: " + dataTypeStr);
+            // Default to VARCHAR for unknown types
+            column.setDataType(DataType.VARCHAR);
         }
-
+        
+        // Parse constraints
         for (int i = 2; i < parts.length; i++) {
             String part = parts[i].toUpperCase();
             if (part.equals("NOT") && i + 1 < parts.length && parts[i + 1].toUpperCase().equals("NULL")) {
@@ -164,10 +183,10 @@ public class SqlParserService {
                 i++;
             }
         }
-
+        
         return column;
     }
-
+    
     private Object parseInsert(String sql) {
         Pattern pattern = Pattern.compile(
                 "INSERT INTO\\s+(\\w+)\\s*\\(([^)]+)\\)\\s*VALUES\\s*\\(([^)]+)\\)",
@@ -178,32 +197,32 @@ public class SqlParserService {
         if (!matcher.find()) {
             throw new IllegalArgumentException("Invalid INSERT syntax");
         }
-
+        
         String tableName = matcher.group(1);
         String[] columns = matcher.group(2).split(",");
         String[] values = matcher.group(3).split(",");
-
+        
         if (columns.length != values.length) {
             throw new IllegalArgumentException("Column count doesn't match value count");
         }
-
+        
         InsertRequest request = new InsertRequest();
         request.setTableName(tableName);
         request.setValues(new HashMap<>());
-
+        
         for (int i = 0; i < columns.length; i++) {
             String colName = columns[i].trim();
             String valueStr = values[i].trim();
             Object value = parseValue(valueStr);
             request.getValues().put(colName, value);
         }
-
+        
         return rdbmsService.insert(request);
     }
-
+    
     private Object parseSelect(String sql) {
         SelectRequest request = new SelectRequest();
-
+        
         // Parse SELECT columns
         Pattern selectPattern = Pattern.compile("SELECT\\s+(.+?)\\s+FROM", Pattern.CASE_INSENSITIVE);
         Matcher selectMatcher = selectPattern.matcher(sql);
@@ -217,49 +236,49 @@ public class SqlParserService {
                         .collect(Collectors.toList()));
             }
         }
-
+        
         // Parse FROM table
         Pattern fromPattern = Pattern.compile("FROM\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
         Matcher fromMatcher = fromPattern.matcher(sql);
         if (fromMatcher.find()) {
             request.setTableName(fromMatcher.group(1));
         }
-
+        
         // Parse WHERE clause
-        Pattern wherePattern = Pattern.compile("WHERE\\s+(.+?)(?:\\s+LIMIT|\\s+OFFSET|$)", Pattern.CASE_INSENSITIVE);
+        Pattern wherePattern = Pattern.compile("WHERE\\s+(.+?)(?:\\s+ORDER|\\s+LIMIT|\\s+OFFSET|$)", Pattern.CASE_INSENSITIVE);
         Matcher whereMatcher = wherePattern.matcher(sql);
         if (whereMatcher.find()) {
             String whereClause = whereMatcher.group(1).trim();
             request.setWhere(parseWhereClause(whereClause));
         }
-
+        
         // Parse LIMIT
         Pattern limitPattern = Pattern.compile("LIMIT\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
         Matcher limitMatcher = limitPattern.matcher(sql);
         if (limitMatcher.find()) {
             request.setLimit(Integer.parseInt(limitMatcher.group(1)));
         }
-
+        
         // Parse OFFSET
         Pattern offsetPattern = Pattern.compile("OFFSET\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
         Matcher offsetMatcher = offsetPattern.matcher(sql);
         if (offsetMatcher.find()) {
             request.setOffset(Integer.parseInt(offsetMatcher.group(1)));
         }
-
+        
         return rdbmsService.select(request);
     }
-
+    
     private Object parseUpdate(String sql) {
         UpdateRequest request = new UpdateRequest();
-
+        
         // Parse UPDATE table
         Pattern updatePattern = Pattern.compile("UPDATE\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
         Matcher updateMatcher = updatePattern.matcher(sql);
         if (updateMatcher.find()) {
             request.setTableName(updateMatcher.group(1));
         }
-
+        
         // Parse SET clause
         Pattern setPattern = Pattern.compile("SET\\s+(.+?)(?:\\s+WHERE|$)", Pattern.CASE_INSENSITIVE);
         Matcher setMatcher = setPattern.matcher(sql);
@@ -267,7 +286,7 @@ public class SqlParserService {
             String setClause = setMatcher.group(1).trim();
             request.setSet(parseSetClause(setClause));
         }
-
+        
         // Parse WHERE clause
         Pattern wherePattern = Pattern.compile("WHERE\\s+(.+)", Pattern.CASE_INSENSITIVE);
         Matcher whereMatcher = wherePattern.matcher(sql);
@@ -275,20 +294,20 @@ public class SqlParserService {
             String whereClause = whereMatcher.group(1).trim();
             request.setWhere(parseWhereClause(whereClause));
         }
-
+        
         return rdbmsService.update(request);
     }
-
+    
     private Object parseDelete(String sql) {
         DeleteRequest request = new DeleteRequest();
-
+        
         // Parse DELETE FROM table
         Pattern deletePattern = Pattern.compile("DELETE FROM\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
         Matcher deleteMatcher = deletePattern.matcher(sql);
         if (deleteMatcher.find()) {
             request.setTableName(deleteMatcher.group(1));
         }
-
+        
         // Parse WHERE clause
         Pattern wherePattern = Pattern.compile("WHERE\\s+(.+)", Pattern.CASE_INSENSITIVE);
         Matcher whereMatcher = wherePattern.matcher(sql);
@@ -296,13 +315,13 @@ public class SqlParserService {
             String whereClause = whereMatcher.group(1).trim();
             request.setWhere(parseWhereClause(whereClause));
         }
-
+        
         return rdbmsService.delete(request);
     }
-
+    
     private Object parseJoin(String sql) {
         JoinRequest request = new JoinRequest();
-
+        
         // Parse SELECT columns
         Pattern selectPattern = Pattern.compile("SELECT\\s+(.+?)\\s+FROM", Pattern.CASE_INSENSITIVE);
         Matcher selectMatcher = selectPattern.matcher(sql);
@@ -314,10 +333,10 @@ public class SqlParserService {
                         .collect(Collectors.toList()));
             }
         }
-
+        
         // Parse FROM and JOIN
         Pattern joinPattern = Pattern.compile(
-                "FROM\\s+(\\w+)\\s+(INNER|LEFT|RIGHT)?\\s*JOIN\\s+(\\w+)\\s+ON\\s+(\\w+)\\.(\\w+)\\s*=\\s*(\\w+)\\.(\\w+)",
+                "FROM\\s+(\\w+)(?:\\s+\\w+)?\\s+(INNER|LEFT|RIGHT)?\\s*JOIN\\s+(\\w+)(?:\\s+\\w+)?\\s+ON\\s+(\\w+)\\.(\\w+)\\s*=\\s*(\\w+)\\.(\\w+)",
                 Pattern.CASE_INSENSITIVE
         );
         Matcher joinMatcher = joinPattern.matcher(sql);
@@ -326,23 +345,32 @@ public class SqlParserService {
             String joinType = joinMatcher.group(2);
             if (joinType != null) {
                 request.setJoinType(JoinRequest.JoinType.valueOf(joinType.toUpperCase()));
+            } else {
+                request.setJoinType(JoinRequest.JoinType.INNER);
             }
             request.setRightTable(joinMatcher.group(3));
             request.setLeftColumn(joinMatcher.group(5));
             request.setRightColumn(joinMatcher.group(7));
         }
-
+        
         // Parse WHERE clause
-        Pattern wherePattern = Pattern.compile("WHERE\\s+(.+)", Pattern.CASE_INSENSITIVE);
+        Pattern wherePattern = Pattern.compile("WHERE\\s+(.+?)(?:\\s+LIMIT|\\s+OFFSET|$)", Pattern.CASE_INSENSITIVE);
         Matcher whereMatcher = wherePattern.matcher(sql);
         if (whereMatcher.find()) {
             String whereClause = whereMatcher.group(1).trim();
             request.setWhere(parseWhereClause(whereClause));
         }
-
+        
+        // Parse LIMIT
+        Pattern limitPattern = Pattern.compile("LIMIT\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
+        Matcher limitMatcher = limitPattern.matcher(sql);
+        if (limitMatcher.find()) {
+            request.setLimit(Integer.parseInt(limitMatcher.group(1)));
+        }
+        
         return rdbmsService.join(request);
     }
-
+    
     private Object parseDescribe(String sql) {
         Pattern pattern = Pattern.compile("(?:DESCRIBE|DESC)\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(sql);
@@ -351,13 +379,7 @@ public class SqlParserService {
         }
         throw new IllegalArgumentException("Invalid DESCRIBE syntax");
     }
-
-    /**
-     * Parses WHERE clause supporting multiple operators.
-     * 
-     * Supported operators: =, !=, <>, >, <, >=, <=, LIKE, IS NULL, IS NOT NULL
-     * Conditions can be combined with AND (OR not supported yet)
-     */
+    
     private Map<String, Object> parseWhereClause(String whereClause) {
         Map<String, Object> where = new HashMap<>();
         
@@ -402,10 +424,8 @@ public class SqlParserService {
                 String valueStr = compMatcher.group(3).trim();
                 
                 if (operator.equals("=")) {
-                    // Simple equality - use direct value for backward compatibility
                     where.put(key, parseValue(valueStr));
                 } else {
-                    // Comparison operator - use operator object
                     Map<String, Object> opCondition = new HashMap<>();
                     opCondition.put("op", operator);
                     opCondition.put("value", parseValue(valueStr));
@@ -415,7 +435,7 @@ public class SqlParserService {
         }
         return where;
     }
-
+    
     private Map<String, Object> parseSetClause(String setClause) {
         Map<String, Object> set = new HashMap<>();
         String[] assignments = setClause.split(",");
@@ -430,7 +450,7 @@ public class SqlParserService {
         }
         return set;
     }
-
+    
     private Object parseValue(String valueStr) {
         valueStr = valueStr.trim();
         if (valueStr.startsWith("'") && valueStr.endsWith("'")) {

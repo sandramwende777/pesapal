@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.pesapal'
-version = '1.0.0'
+version = '2.0.0'  // Updated version for file-based storage
 
 java {
     sourceCompatibility = '17'
@@ -23,20 +23,35 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    // Spring Boot Web (REST API)
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+    
+    // Jackson for JSON serialization (used by our file storage)
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+    
+    // Lombok for cleaner code
     compileOnly 'org.projectlombok:lombok'
-    runtimeOnly 'com.h2database:h2'
     annotationProcessor 'org.projectlombok:lombok'
+    
+    // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    
+    // NOTE: We intentionally DO NOT include:
+    // - spring-boot-starter-data-jpa (we implement our own storage)
+    // - h2database (we use our own file format)
+    // This demonstrates we're building a TRUE RDBMS, not wrapping an existing one.
 }
 
 tasks.named('test') {
     useJUnitPlatform()
 }
 
-// Enable standard input for REPL mode
 bootRun {
     standardInput = System.in
+}
+
+// Create a fat JAR with all dependencies
+bootJar {
+    archiveFileName = 'rdbms-${version}.jar'
 }

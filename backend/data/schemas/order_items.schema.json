@@ -1,0 +1,72 @@
+{
+  "tableName" : "order_items",
+  "columns" : [ {
+    "name" : "id",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 0
+  }, {
+    "name" : "order_id",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 1
+  }, {
+    "name" : "product_id",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 2
+  }, {
+    "name" : "quantity",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 3
+  }, {
+    "name" : "price",
+    "dataType" : "DECIMAL",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 4
+  } ],
+  "keys" : [ {
+    "columnName" : "id",
+    "keyType" : "PRIMARY",
+    "referencesTable" : null,
+    "referencesColumn" : null
+  } ],
+  "indexes" : [ {
+    "indexName" : "idx_item_order",
+    "columnName" : "order_id",
+    "unique" : false,
+    "indexType" : "BTREE"
+  }, {
+    "indexName" : "idx_item_product",
+    "columnName" : "product_id",
+    "unique" : false,
+    "indexType" : "BTREE"
+  } ],
+  "createdAt" : "2026-01-17T21:05:23.352018",
+  "updatedAt" : "2026-01-17T21:05:23.352038",
+  "rowCount" : 0,
+  "nextRowId" : 1,
+  "primaryKeyColumns" : [ "id" ],
+  "uniqueKeyColumns" : [ ]
+}

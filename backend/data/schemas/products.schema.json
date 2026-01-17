@@ -1,0 +1,76 @@
+{
+  "tableName" : "products",
+  "columns" : [ {
+    "name" : "id",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 0
+  }, {
+    "name" : "name",
+    "dataType" : "VARCHAR",
+    "maxLength" : 200,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 1
+  }, {
+    "name" : "description",
+    "dataType" : "TEXT",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : true,
+    "defaultValue" : null,
+    "ordinalPosition" : 2
+  }, {
+    "name" : "price",
+    "dataType" : "DECIMAL",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 3
+  }, {
+    "name" : "stock",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : false,
+    "defaultValue" : null,
+    "ordinalPosition" : 4
+  }, {
+    "name" : "category_id",
+    "dataType" : "INTEGER",
+    "maxLength" : null,
+    "precision" : null,
+    "scale" : null,
+    "nullable" : true,
+    "defaultValue" : null,
+    "ordinalPosition" : 5
+  } ],
+  "keys" : [ {
+    "columnName" : "id",
+    "keyType" : "PRIMARY",
+    "referencesTable" : null,
+    "referencesColumn" : null
+  } ],
+  "indexes" : [ {
+    "indexName" : "idx_product_category",
+    "columnName" : "category_id",
+    "unique" : false,
+    "indexType" : "BTREE"
+  } ],
+  "createdAt" : "2026-01-17T21:05:23.349098",
+  "updatedAt" : "2026-01-17T21:05:23.351398",
+  "rowCount" : 4,
+  "nextRowId" : 9,
+  "primaryKeyColumns" : [ "id" ],
+  "uniqueKeyColumns" : [ ]
+}
