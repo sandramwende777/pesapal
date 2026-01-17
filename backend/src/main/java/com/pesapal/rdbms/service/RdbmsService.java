@@ -371,8 +371,35 @@ public class RdbmsService {
 
     @Transactional(readOnly = true)
     public DatabaseTable getTable(String tableName) {
-        return tableRepository.findByTableName(tableName)
+        DatabaseTable table = tableRepository.findByTableName(tableName)
                 .orElseThrow(() -> new IllegalArgumentException("Table not found: " + tableName));
+        
+        // Initialize lazy collections to avoid LazyInitializationException
+        table.getColumns().size();
+        table.getKeys().size();
+        table.getIndexes().size();
+        table.getRows().size();
+        
+        return table;
+    }
+
+    /**
+     * Drops (deletes) a table and all its data.
+     * 
+     * This removes the table metadata and all associated rows.
+     */
+    @Transactional
+    public void dropTable(String tableName) {
+        DatabaseTable table = tableRepository.findByTableName(tableName)
+                .orElseThrow(() -> new IllegalArgumentException("Table not found: " + tableName));
+        
+        // Delete all rows first
+        rowRepository.deleteAll(table.getRows());
+        
+        // Delete the table (cascades to columns, keys, indexes)
+        tableRepository.delete(table);
+        
+        log.info("Dropped table: {}", tableName);
     }
 
     private List<TableRow> filterRows(List<TableRow> rows, Map<String, Object> where) {
@@ -397,25 +424,154 @@ public class RdbmsService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Enhanced WHERE clause matching supporting multiple operators.
+     * 
+     * Supported operators:
+     * - = (equality)
+     * - != or <> (not equal)
+     * - > (greater than)
+     * - < (less than)
+     * - >= (greater than or equal)
+     * - <= (less than or equal)
+     * - LIKE (pattern matching with % and _)
+     * 
+     * The where map can contain:
+     * - Simple equality: {"column": value}
+     * - With operator: {"column": {"op": ">=", "value": 100}}
+     */
+    @SuppressWarnings("unchecked")
     private boolean matchesWhere(Map<String, Object> rowData, Map<String, Object> where) {
         for (Map.Entry<String, Object> condition : where.entrySet()) {
             String key = condition.getKey();
-            Object expectedValue = condition.getValue();
+            Object conditionValue = condition.getValue();
 
             // Handle table.column format
             Object actualValue;
             if (key.contains(".")) {
-                String[] parts = key.split("\\.");
                 actualValue = rowData.get(key); // Use full key
             } else {
                 actualValue = rowData.get(key);
             }
 
-            if (!Objects.equals(actualValue, expectedValue)) {
-                return false;
+            // Check if condition is an operator object or simple equality
+            if (conditionValue instanceof Map) {
+                Map<String, Object> opCondition = (Map<String, Object>) conditionValue;
+                String operator = (String) opCondition.get("op");
+                Object expectedValue = opCondition.get("value");
+                
+                if (!evaluateCondition(actualValue, operator, expectedValue)) {
+                    return false;
+                }
+            } else {
+                // Simple equality check
+                if (!Objects.equals(actualValue, conditionValue)) {
+                    return false;
+                }
             }
         }
         return true;
+    }
+
+    /**
+     * Evaluates a condition with a specific operator.
+     */
+    private boolean evaluateCondition(Object actualValue, String operator, Object expectedValue) {
+        if (operator == null || operator.equals("=")) {
+            return Objects.equals(actualValue, expectedValue);
+        }
+
+        switch (operator.toUpperCase()) {
+            case "!=":
+            case "<>":
+                return !Objects.equals(actualValue, expectedValue);
+            
+            case ">":
+                return compareValues(actualValue, expectedValue) > 0;
+            
+            case "<":
+                return compareValues(actualValue, expectedValue) < 0;
+            
+            case ">=":
+                return compareValues(actualValue, expectedValue) >= 0;
+            
+            case "<=":
+                return compareValues(actualValue, expectedValue) <= 0;
+            
+            case "LIKE":
+                return matchesLike(actualValue, expectedValue);
+            
+            case "IS NULL":
+                return actualValue == null;
+            
+            case "IS NOT NULL":
+                return actualValue != null;
+            
+            default:
+                // Unknown operator, treat as equality
+                return Objects.equals(actualValue, expectedValue);
+        }
+    }
+
+    /**
+     * Compares two values, handling numeric and string comparisons.
+     */
+    @SuppressWarnings("unchecked")
+    private int compareValues(Object actual, Object expected) {
+        if (actual == null && expected == null) return 0;
+        if (actual == null) return -1;
+        if (expected == null) return 1;
+
+        // Try numeric comparison
+        if (actual instanceof Number && expected instanceof Number) {
+            double d1 = ((Number) actual).doubleValue();
+            double d2 = ((Number) expected).doubleValue();
+            return Double.compare(d1, d2);
+        }
+
+        // Try to parse as numbers
+        try {
+            double d1 = Double.parseDouble(String.valueOf(actual));
+            double d2 = Double.parseDouble(String.valueOf(expected));
+            return Double.compare(d1, d2);
+        } catch (NumberFormatException e) {
+            // Fall back to string comparison
+        }
+
+        // String comparison
+        if (actual instanceof Comparable && expected instanceof Comparable) {
+            try {
+                return ((Comparable<Object>) actual).compareTo(expected);
+            } catch (ClassCastException e) {
+                // Types not comparable, compare as strings
+            }
+        }
+
+        return String.valueOf(actual).compareTo(String.valueOf(expected));
+    }
+
+    /**
+     * Matches a value against a LIKE pattern.
+     * % matches any sequence of characters
+     * _ matches any single character
+     */
+    private boolean matchesLike(Object actualValue, Object pattern) {
+        if (actualValue == null || pattern == null) {
+            return false;
+        }
+
+        String value = String.valueOf(actualValue);
+        String patternStr = String.valueOf(pattern);
+
+        // Convert SQL LIKE pattern to regex
+        String regex = patternStr
+            .replace(".", "\\.")
+            .replace("*", "\\*")
+            .replace("?", "\\?")
+            .replace("%", ".*")
+            .replace("_", ".");
+
+        return value.matches("(?i)" + regex); // Case-insensitive
     }
 
     private void validatePrimaryKey(DatabaseTable table, Map<String, Object> rowData) {
@@ -441,8 +597,12 @@ public class RdbmsService {
                         if (Objects.equals(existingData.get(pk.getColumnName()), value)) {
                             throw new IllegalArgumentException("Duplicate primary key value: " + value);
                         }
+                    } catch (IllegalArgumentException e) {
+                        // Re-throw validation errors
+                        throw e;
                     } catch (Exception e) {
-                        // Skip invalid rows
+                        // Skip rows with invalid JSON data
+                        log.warn("Skipping row with invalid data during primary key validation", e);
                     }
                 }
             }
@@ -468,8 +628,12 @@ public class RdbmsService {
                         if (Objects.equals(existingData.get(uk.getColumnName()), value)) {
                             throw new IllegalArgumentException("Duplicate unique key value: " + value);
                         }
+                    } catch (IllegalArgumentException e) {
+                        // Re-throw validation errors
+                        throw e;
                     } catch (Exception e) {
-                        // Skip invalid rows
+                        // Skip rows with invalid JSON data
+                        log.warn("Skipping row with invalid data during unique key validation", e);
                     }
                 }
             }

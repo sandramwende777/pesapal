@@ -49,6 +49,7 @@ pesapal/
 
 ### Supported Operations
 - ✅ CREATE TABLE with column definitions
+- ✅ DROP TABLE to remove tables
 - ✅ Data types: VARCHAR, INTEGER, BIGINT, DECIMAL, BOOLEAN, DATE, TIMESTAMP, TEXT
 - ✅ PRIMARY KEY constraints
 - ✅ UNIQUE constraints
@@ -58,6 +59,8 @@ pesapal/
 - ✅ UPDATE with WHERE clause
 - ✅ DELETE with WHERE clause
 - ✅ JOIN operations (INNER, LEFT, RIGHT)
+- ✅ WHERE clause operators: =, !=, <>, >, <, >=, <=, LIKE, IS NULL, IS NOT NULL
+- ✅ **Interactive REPL mode** (command-line SQL interface)
 
 ## Prerequisites
 
@@ -86,6 +89,43 @@ cd backend
 
 The backend will start on `http://localhost:8080`
 
+### Running in REPL Mode (Interactive Command-Line)
+
+To use the interactive SQL REPL (Read-Eval-Print-Loop):
+
+```bash
+cd backend
+./gradlew bootRun --args='--repl.enabled=true'
+```
+
+Or if using a JAR file:
+```bash
+java -jar build/libs/rdbms-0.0.1-SNAPSHOT.jar --repl.enabled=true
+```
+
+This starts an interactive command-line interface:
+```
+╔═══════════════════════════════════════════════════════════════╗
+║           Simple RDBMS - Interactive SQL Interface            ║
+║                        Version 1.0                            ║
+╚═══════════════════════════════════════════════════════════════╝
+
+rdbms> SHOW TABLES;
++------------+---------+------+
+| Table Name | Columns | Rows |
++------------+---------+------+
+| products   |       6 |    4 |
+| categories |       3 |    3 |
++------------+---------+------+
+2 table(s) in database
+Time: 5 ms
+
+rdbms> SELECT * FROM products WHERE price > 100;
+...
+```
+
+Type `help` for examples, `quit` to exit.
+
 ### Frontend Setup
 
 1. Navigate to the frontend directory:
@@ -112,6 +152,7 @@ The frontend will start on `http://localhost:3000`
 - `POST /api/rdbms/tables` - Create a new table
 - `GET /api/rdbms/tables` - List all tables
 - `GET /api/rdbms/tables/{tableName}` - Get table metadata
+- `DELETE /api/rdbms/tables/{tableName}` - Drop a table
 - `POST /api/rdbms/insert` - Insert a row
 - `POST /api/rdbms/select` - Select rows
 - `PUT /api/rdbms/update` - Update rows
@@ -136,8 +177,14 @@ INSERT INTO products (id, name, price, stock) VALUES (1, 'Laptop', 999.99, 50);
 
 -- Select data
 SELECT * FROM products;
-SELECT * FROM products WHERE price > 500;
 SELECT name, price FROM products LIMIT 10;
+
+-- WHERE clause with comparison operators
+SELECT * FROM products WHERE price > 500;
+SELECT * FROM products WHERE price >= 100 AND price <= 1000;
+SELECT * FROM products WHERE stock != 0;
+SELECT * FROM products WHERE name LIKE '%Laptop%';
+SELECT * FROM products WHERE description IS NOT NULL;
 
 -- Update data
 UPDATE products SET price = 899.99 WHERE id = 1;
@@ -145,8 +192,12 @@ UPDATE products SET price = 899.99 WHERE id = 1;
 -- Delete data
 DELETE FROM products WHERE id = 1;
 
+-- Drop a table
+DROP TABLE products;
+
 -- Join tables
-SELECT * FROM products p INNER JOIN categories c ON p.category_id = c.id;
+SELECT * FROM products INNER JOIN categories ON products.category_id = categories.id;
+SELECT * FROM orders LEFT JOIN order_items ON orders.id = order_items.order_id;
 
 -- Show tables
 SHOW TABLES;
@@ -179,9 +230,10 @@ The application automatically initializes sample e-commerce tables **using our R
 - Foreign key relationships are supported through JOIN operations
 
 ### Limitations
-- WHERE clauses currently support only equality conditions
 - JOIN operations are limited to equality joins
-- No support for complex SQL features (subqueries, aggregations, etc.)
+- No support for complex SQL features (subqueries, aggregations like COUNT/SUM, etc.)
+- OR conditions in WHERE clauses are not supported (only AND)
+- Indexes are stored as metadata but don't optimize query performance
 - Data types are validated but not strictly enforced at the storage level
 
 ## Testing
@@ -191,6 +243,15 @@ The application automatically initializes sample e-commerce tables **using our R
 cd backend
 ./gradlew test
 ```
+
+The test suite includes:
+- CREATE TABLE tests (with PRIMARY KEY, UNIQUE constraints)
+- INSERT tests (including constraint violation tests)
+- SELECT tests (basic, WHERE, LIMIT, column projection)
+- UPDATE and DELETE tests
+- DROP TABLE tests
+- JOIN tests (INNER, LEFT)
+- SQL Parser tests (all SQL commands)
 
 ### Manual Testing
 1. Use the React UI to execute SQL queries

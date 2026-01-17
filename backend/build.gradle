@@ -35,3 +35,8 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+// Enable standard input for REPL mode
+bootRun {
+    standardInput = System.in
+}

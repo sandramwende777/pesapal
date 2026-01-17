@@ -23,6 +23,8 @@ public class SqlParserService {
         
         if (sql.toUpperCase().startsWith("CREATE TABLE")) {
             return parseCreateTable(sql);
+        } else if (sql.toUpperCase().startsWith("DROP TABLE")) {
+            return parseDropTable(sql);
         } else if (sql.toUpperCase().startsWith("INSERT INTO")) {
             return parseInsert(sql);
         } else if (sql.toUpperCase().startsWith("SELECT")) {
@@ -40,6 +42,22 @@ public class SqlParserService {
         } else {
             throw new IllegalArgumentException("Unsupported SQL statement: " + sql);
         }
+    }
+
+    private Object parseDropTable(String sql) {
+        Pattern pattern = Pattern.compile(
+                "DROP TABLE(?:\\s+IF\\s+EXISTS)?\\s+(\\w+)",
+                Pattern.CASE_INSENSITIVE
+        );
+        Matcher matcher = pattern.matcher(sql);
+        
+        if (!matcher.find()) {
+            throw new IllegalArgumentException("Invalid DROP TABLE syntax");
+        }
+
+        String tableName = matcher.group(1);
+        rdbmsService.dropTable(tableName);
+        return "Table '" + tableName + "' dropped successfully";
     }
 
     private Object parseCreateTable(String sql) {
@@ -334,17 +352,65 @@ public class SqlParserService {
         throw new IllegalArgumentException("Invalid DESCRIBE syntax");
     }
 
+    /**
+     * Parses WHERE clause supporting multiple operators.
+     * 
+     * Supported operators: =, !=, <>, >, <, >=, <=, LIKE, IS NULL, IS NOT NULL
+     * Conditions can be combined with AND (OR not supported yet)
+     */
     private Map<String, Object> parseWhereClause(String whereClause) {
         Map<String, Object> where = new HashMap<>();
-        // Simple equality conditions only
-        String[] conditions = whereClause.split("AND");
+        
+        // Split by AND (case insensitive)
+        String[] conditions = whereClause.split("(?i)\\s+AND\\s+");
+        
         for (String condition : conditions) {
             condition = condition.trim();
-            if (condition.contains("=")) {
-                String[] parts = condition.split("=", 2);
-                String key = parts[0].trim();
-                String valueStr = parts[1].trim();
-                where.put(key, parseValue(valueStr));
+            
+            // Handle IS NULL / IS NOT NULL
+            Pattern isNullPattern = Pattern.compile("(\\w+(?:\\.\\w+)?)\\s+IS\\s+(NOT\\s+)?NULL", Pattern.CASE_INSENSITIVE);
+            Matcher isNullMatcher = isNullPattern.matcher(condition);
+            if (isNullMatcher.find()) {
+                String key = isNullMatcher.group(1).trim();
+                boolean isNotNull = isNullMatcher.group(2) != null;
+                Map<String, Object> opCondition = new HashMap<>();
+                opCondition.put("op", isNotNull ? "IS NOT NULL" : "IS NULL");
+                opCondition.put("value", null);
+                where.put(key, opCondition);
+                continue;
+            }
+            
+            // Handle LIKE
+            Pattern likePattern = Pattern.compile("(\\w+(?:\\.\\w+)?)\\s+LIKE\\s+(.+)", Pattern.CASE_INSENSITIVE);
+            Matcher likeMatcher = likePattern.matcher(condition);
+            if (likeMatcher.find()) {
+                String key = likeMatcher.group(1).trim();
+                String valueStr = likeMatcher.group(2).trim();
+                Map<String, Object> opCondition = new HashMap<>();
+                opCondition.put("op", "LIKE");
+                opCondition.put("value", parseValue(valueStr));
+                where.put(key, opCondition);
+                continue;
+            }
+            
+            // Handle comparison operators: >=, <=, <>, !=, >, <, =
+            Pattern compPattern = Pattern.compile("(\\w+(?:\\.\\w+)?)\\s*(>=|<=|<>|!=|>|<|=)\\s*(.+)");
+            Matcher compMatcher = compPattern.matcher(condition);
+            if (compMatcher.find()) {
+                String key = compMatcher.group(1).trim();
+                String operator = compMatcher.group(2).trim();
+                String valueStr = compMatcher.group(3).trim();
+                
+                if (operator.equals("=")) {
+                    // Simple equality - use direct value for backward compatibility
+                    where.put(key, parseValue(valueStr));
+                } else {
+                    // Comparison operator - use operator object
+                    Map<String, Object> opCondition = new HashMap<>();
+                    opCondition.put("op", operator);
+                    opCondition.put("value", parseValue(valueStr));
+                    where.put(key, opCondition);
+                }
             }
         }
         return where;

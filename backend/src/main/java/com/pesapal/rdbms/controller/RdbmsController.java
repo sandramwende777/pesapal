@@ -36,6 +36,12 @@ public class RdbmsController {
         return ResponseEntity.ok(rdbmsService.getTable(tableName));
     }
 
+    @DeleteMapping("/tables/{tableName}")
+    public ResponseEntity<Map<String, Object>> dropTable(@PathVariable String tableName) {
+        rdbmsService.dropTable(tableName);
+        return ResponseEntity.ok(Map.of("message", "Table '" + tableName + "' dropped successfully"));
+    }
+
     @PostMapping("/insert")
     public ResponseEntity<TableRow> insert(@RequestBody InsertRequest request) {
         return ResponseEntity.ok(rdbmsService.insert(request));
