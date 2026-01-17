@@ -26,6 +26,11 @@ public class FileBasedSqlParserService {
     public Object executeSql(String sql) {
         sql = sql.trim().replaceAll("\\s+", " ");
         
+        // Remove trailing semicolon if present
+        if (sql.endsWith(";")) {
+            sql = sql.substring(0, sql.length() - 1).trim();
+        }
+        
         // Handle EXPLAIN prefix
         if (sql.toUpperCase().startsWith("EXPLAIN ")) {
             return parseExplain(sql);
@@ -111,18 +116,28 @@ public class FileBasedSqlParserService {
     }
     
     private Object parseCreateTable(String sql) {
-        Pattern pattern = Pattern.compile(
-                "CREATE TABLE\\s+(\\w+)\\s*\\(([^)]+)\\)",
+        // Extract table name
+        Pattern tableNamePattern = Pattern.compile(
+                "CREATE TABLE\\s+(\\w+)\\s*\\(",
                 Pattern.CASE_INSENSITIVE
         );
-        Matcher matcher = pattern.matcher(sql);
+        Matcher tableNameMatcher = tableNamePattern.matcher(sql);
         
-        if (!matcher.find()) {
+        if (!tableNameMatcher.find()) {
             throw new IllegalArgumentException("Invalid CREATE TABLE syntax");
         }
         
-        String tableName = matcher.group(1);
-        String columnsDef = matcher.group(2);
+        String tableName = tableNameMatcher.group(1);
+        
+        // Extract everything between the outer parentheses (handle nested parens)
+        int startParen = sql.indexOf('(');
+        int endParen = sql.lastIndexOf(')');
+        
+        if (startParen == -1 || endParen == -1 || endParen <= startParen) {
+            throw new IllegalArgumentException("Invalid CREATE TABLE syntax: missing parentheses");
+        }
+        
+        String columnsDef = sql.substring(startParen + 1, endParen);
         
         CreateTableRequest request = new CreateTableRequest();
         request.setTableName(tableName);
@@ -131,9 +146,13 @@ public class FileBasedSqlParserService {
         request.setUniqueKeys(new ArrayList<>());
         request.setIndexes(new ArrayList<>());
         
-        String[] columnDefs = columnsDef.split(",");
-        for (String colDef : columnDefs) {
+        // Split by comma, but respect parentheses
+        List<String> columnDefsList = splitByCommaRespectingParens(columnsDef);
+        
+        for (String colDef : columnDefsList) {
             colDef = colDef.trim();
+            
+            if (colDef.isEmpty()) continue;
             
             if (colDef.toUpperCase().startsWith("PRIMARY KEY")) {
                 Pattern pkPattern = Pattern.compile("PRIMARY KEY\\s*\\(([^)]+)\\)", Pattern.CASE_INSENSITIVE);
@@ -165,7 +184,9 @@ public class FileBasedSqlParserService {
                 }
             } else {
                 CreateTableRequest.ColumnDefinition column = parseColumnDefinition(colDef);
-                request.getColumns().add(column);
+                if (column != null) {
+                    request.getColumns().add(column);
+                }
             }
         }
         
@@ -543,5 +564,39 @@ public class FileBasedSqlParserService {
         } else {
             return valueStr;
         }
+    }
+    
+    /**
+     * Splits a string by comma, but respects parentheses.
+     * For example: "id INTEGER, PRIMARY KEY (id), UNIQUE (email)"
+     * becomes: ["id INTEGER", "PRIMARY KEY (id)", "UNIQUE (email)"]
+     */
+    private List<String> splitByCommaRespectingParens(String input) {
+        List<String> result = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int parenDepth = 0;
+        
+        for (char c : input.toCharArray()) {
+            if (c == '(') {
+                parenDepth++;
+                current.append(c);
+            } else if (c == ')') {
+                parenDepth--;
+                current.append(c);
+            } else if (c == ',' && parenDepth == 0) {
+                // Split here - we're not inside parentheses
+                result.add(current.toString().trim());
+                current = new StringBuilder();
+            } else {
+                current.append(c);
+            }
+        }
+        
+        // Don't forget the last part
+        if (current.length() > 0) {
+            result.add(current.toString().trim());
+        }
+        
+        return result;
     }
 }
